@@ -64,7 +64,7 @@ fn encode_to_wire() -> Result<(Vec<u8>, usize), Box<dyn std::error::Error>> {
             }
             let parameter_sets =
                 h264_parameter_sets(&frame).ok_or("could not extract SPS/PPS from encoder")?;
-            protocol::write_message(
+            protocol::write_framed(
                 &mut wire,
                 &Message::StreamStart {
                     width: WIDTH as u32,
@@ -76,7 +76,7 @@ fn encode_to_wire() -> Result<(Vec<u8>, usize), Box<dyn std::error::Error>> {
             started = true;
         }
         let (pts_value, pts_timescale) = frame.presentation_time;
-        protocol::write_message(
+        protocol::write_framed(
             &mut wire,
             &Message::Frame { pts_value, pts_timescale, keyframe, data: frame.data },
         )?;
@@ -95,7 +95,7 @@ fn decode_from_wire(wire: &[u8]) -> Result<usize, Box<dyn std::error::Error>> {
 
     let mut cursor = std::io::Cursor::new(wire);
     loop {
-        let message = match protocol::read_message(&mut cursor) {
+        let message: Message = match protocol::read_framed(&mut cursor) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e.into()),

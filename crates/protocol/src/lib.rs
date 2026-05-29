@@ -5,6 +5,7 @@
 
 use std::io::{self, Read, Write};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Protocol version negotiated during the connection handshake.
@@ -37,11 +38,36 @@ pub enum Message {
     },
 }
 
-/// Write a length-prefixed, postcard-encoded message to a stream.
+/// A client -> host input event. Pointer coordinates are normalized to the
+/// streamed frame (`[0, 1]` from the top-left), so they're independent of the
+/// client window size and the host display resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Input {
+    /// Absolute pointer position within the streamed frame.
+    MouseMove { x: f32, y: f32 },
+    /// A mouse button changed state.
+    MouseButton { button: Button, pressed: bool },
+    /// Wheel scroll in lines (positive `dy` scrolls up, positive `dx` right).
+    Scroll { dx: f32, dy: f32 },
+    /// A key changed state. `code` is a platform-neutral key identifier the host
+    /// maps to its OS keycode.
+    Key { code: u32, pressed: bool },
+}
+
+/// A mouse button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Button {
+    Left,
+    Right,
+    Middle,
+}
+
+/// Write a length-prefixed, postcard-encoded value to a stream. Used for every
+/// framed message in both directions ([`Message`] downstream, [`Input`] upstream).
 ///
 /// # Errors
 /// Returns an error if encoding fails or the underlying writer errors.
-pub fn write_message<W: Write>(w: &mut W, msg: &Message) -> io::Result<()> {
+pub fn write_framed<W: Write, T: Serialize>(w: &mut W, msg: &T) -> io::Result<()> {
     let body = postcard::to_stdvec(msg).map_err(io::Error::other)?;
     let len = u32::try_from(body.len()).map_err(|_| io::Error::other("message too large"))?;
     w.write_all(&len.to_le_bytes())?;
@@ -49,11 +75,11 @@ pub fn write_message<W: Write>(w: &mut W, msg: &Message) -> io::Result<()> {
     Ok(())
 }
 
-/// Read a length-prefixed, postcard-encoded message from a stream.
+/// Read a length-prefixed, postcard-encoded value from a stream.
 ///
 /// # Errors
 /// Returns an error if the stream ends, the length is invalid, or decoding fails.
-pub fn read_message<R: Read>(r: &mut R) -> io::Result<Message> {
+pub fn read_framed<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf)?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -135,12 +161,34 @@ mod tests {
 
         let mut buf = Vec::new();
         for m in &msgs {
-            write_message(&mut buf, m).unwrap();
+            write_framed(&mut buf, m).unwrap();
         }
 
         let mut cursor = io::Cursor::new(buf);
         for expected in &msgs {
-            let got = read_message(&mut cursor).unwrap();
+            let got: Message = read_framed(&mut cursor).unwrap();
+            assert_eq!(&got, expected);
+        }
+    }
+
+    #[test]
+    fn input_messages_round_trip() {
+        let inputs = vec![
+            Input::MouseMove { x: 0.25, y: 0.75 },
+            Input::MouseButton { button: Button::Left, pressed: true },
+            Input::MouseButton { button: Button::Right, pressed: false },
+            Input::Scroll { dx: -1.0, dy: 2.5 },
+            Input::Key { code: 42, pressed: true },
+        ];
+
+        let mut buf = Vec::new();
+        for input in &inputs {
+            write_framed(&mut buf, input).unwrap();
+        }
+
+        let mut cursor = io::Cursor::new(buf);
+        for expected in &inputs {
+            let got: Input = read_framed(&mut cursor).unwrap();
             assert_eq!(&got, expected);
         }
     }

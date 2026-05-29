@@ -58,7 +58,7 @@ fn connect_and_stream(addr: &str, shared: &Shared) -> Result<(), Box<dyn std::er
     let mut decoder: Option<DecompressionSession> = None;
 
     loop {
-        let message = match protocol::read_message(&mut reader) {
+        let message: Message = match protocol::read_framed(&mut reader) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 println!("host closed the stream");

@@ -135,7 +135,7 @@ fn stream_to_client(
                 codec: WireCodec::H264,
                 parameter_sets,
             };
-            if protocol::write_message(&mut out, &start).is_err() {
+            if protocol::write_framed(&mut out, &start).is_err() {
                 return Ok(()); // client gone
             }
             started = true;
@@ -144,7 +144,7 @@ fn stream_to_client(
 
         let (pts_value, pts_timescale) = frame.presentation_time;
         let msg = Message::Frame { pts_value, pts_timescale, keyframe, data: frame.data };
-        if protocol::write_message(&mut out, &msg).is_err() || out.flush().is_err() {
+        if protocol::write_framed(&mut out, &msg).is_err() || out.flush().is_err() {
             return Ok(()); // client gone
         }
 
