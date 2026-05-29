@@ -15,6 +15,7 @@ use std::thread;
 
 use apple_cf::iosurface::IOSurface;
 use apple_cf::raw;
+use core_graphics::display::CGDisplay;
 use core_graphics::event::{
     CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit,
 };
@@ -27,9 +28,28 @@ use videotoolbox::prelude::*;
 const FPS: i32 = 60;
 const BITRATE: i32 = 20_000_000;
 const DEFAULT_ADDR: &str = "0.0.0.0:9000";
+const VDISPLAY_WIDTH: u32 = 1920;
+const VDISPLAY_HEIGHT: u32 = 1080;
+
+extern "C" {
+    /// Create a virtual display (Objective-C shim); returns its CGDirectDisplayID
+    /// (0 on failure). The display is retained for the process lifetime.
+    fn extender_vdisplay_create(width: u32, height: u32, hidpi: u32) -> u32;
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_ADDR.to_string());
+
+    // Create the virtual display we extend onto and wait for the window server to
+    // register it, so capture can find it and input can target its bounds.
+    let virtual_id = unsafe { extender_vdisplay_create(VDISPLAY_WIDTH, VDISPLAY_HEIGHT, 0) };
+    if virtual_id == 0 {
+        return Err("failed to create the virtual display (CGVirtualDisplay rejected it)".into());
+    }
+    let bounds = wait_for_display(virtual_id)
+        .ok_or("virtual display did not register with the window server")?;
+    println!("created virtual display {virtual_id} ({VDISPLAY_WIDTH}x{VDISPLAY_HEIGHT})");
+
     let listener = TcpListener::bind(&addr)?;
     println!(
         "extender-host listening on {addr} (protocol v{})",
@@ -49,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .peer_addr()
             .map_or_else(|_| "?".to_string(), |a| a.to_string());
         println!("client connected: {peer}");
-        match serve(stream) {
+        match serve(stream, virtual_id, bounds) {
             Ok(()) => println!("client {peer} disconnected"),
             Err(e) => eprintln!("session with {peer} ended: {e}"),
         }
@@ -58,18 +78,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Poll until display `id` is registered, returning its global bounds
+/// (origin x/y, width, height — in points) for input mapping.
+fn wait_for_display(id: u32) -> Option<(f64, f64, f64, f64)> {
+    for _ in 0..50 {
+        if CGDisplay::active_displays()
+            .unwrap_or_default()
+            .contains(&id)
+        {
+            let b = CGDisplay::new(id).bounds();
+            return Some((b.origin.x, b.origin.y, b.size.width, b.size.height));
+        }
+        thread::sleep(std::time::Duration::from_millis(100));
+    }
+    None
+}
+
 /// Capture + encode the main display and stream it to one connected client until
 /// it disconnects. A fresh capture session and encoder per client guarantees the
 /// stream opens on a keyframe.
-fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+fn serve(
+    stream: TcpStream,
+    virtual_id: u32,
+    bounds: (f64, f64, f64, f64),
+) -> Result<(), Box<dyn std::error::Error>> {
     let content = SCShareableContent::get()?;
     let display = content
         .displays()
         .into_iter()
-        .next()
-        .ok_or("no displays available (is Screen Recording permission granted?)")?;
+        .find(|d| d.display_id() == virtual_id)
+        .ok_or("virtual display not in shareable content (is Screen Recording permission granted?)")?;
     let (width, height) = (display.width(), display.height());
-    println!("capturing display {} at {width}x{height}", display.display_id());
+    println!("capturing virtual display {virtual_id} at {width}x{height}");
 
     let encoder = Arc::new(
         CompressionSession::builder(width as i32, height as i32, Codec::H264)
@@ -108,7 +148,7 @@ fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     // A second handle on the same socket carries client -> host input, injected
     // on its own thread for as long as the client stays connected.
     let input_stream = stream.try_clone()?;
-    let input_thread = thread::spawn(move || receive_and_inject(input_stream, width, height));
+    let input_thread = thread::spawn(move || receive_and_inject(input_stream, bounds));
 
     sc.start_capture()?;
     let result = stream_to_client(stream, &rx, width, height);
@@ -120,23 +160,26 @@ fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
 /// Read input events from the client and inject them into the OS until the
 /// client disconnects. Pointer coordinates map from normalized frame space to
 /// the captured display's pixels.
-fn receive_and_inject(mut stream: TcpStream, width: u32, height: u32) {
-    let (w, h) = (f64::from(width), f64::from(height));
-    let mut cursor = (0.0_f64, 0.0_f64);
+fn receive_and_inject(mut stream: TcpStream, bounds: (f64, f64, f64, f64)) {
+    let mut cursor = (bounds.0, bounds.1);
     while let Ok(input) = protocol::read_framed::<_, Input>(&mut stream) {
-        inject(input, w, h, &mut cursor);
+        inject(input, bounds, &mut cursor);
     }
 }
 
 /// Inject one input event via CoreGraphics. `cursor` tracks the last pointer
-/// position so button and scroll events fire where the pointer is.
-fn inject(input: Input, w: f64, h: f64, cursor: &mut (f64, f64)) {
+/// position so button and scroll events fire where the pointer is. Normalized
+/// pointer coords map into the virtual display's global `bounds`.
+fn inject(input: Input, bounds: (f64, f64, f64, f64), cursor: &mut (f64, f64)) {
     let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
         return;
     };
     match input {
         Input::MouseMove { x, y } => {
-            *cursor = (f64::from(x) * w, f64::from(y) * h);
+            *cursor = (
+                bounds.0 + f64::from(x) * bounds.2,
+                bounds.1 + f64::from(y) * bounds.3,
+            );
             post_mouse(source, CGEventType::MouseMoved, *cursor, CGMouseButton::Left);
         }
         Input::MouseButton { button, pressed } => {
