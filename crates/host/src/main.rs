@@ -15,7 +15,9 @@ use std::thread;
 
 use apple_cf::iosurface::IOSurface;
 use apple_cf::raw;
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton};
+use core_graphics::event::{
+    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit,
+};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use extender_protocol::{self as protocol, Button, Codec as WireCodec, Input, Message};
@@ -127,32 +129,82 @@ fn receive_and_inject(mut stream: TcpStream, width: u32, height: u32) {
 }
 
 /// Inject one input event via CoreGraphics. `cursor` tracks the last pointer
-/// position so button events fire where the pointer is.
+/// position so button and scroll events fire where the pointer is.
 fn inject(input: Input, w: f64, h: f64, cursor: &mut (f64, f64)) {
     let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
         return;
     };
-    let (event_type, button) = match input {
+    match input {
         Input::MouseMove { x, y } => {
             *cursor = (f64::from(x) * w, f64::from(y) * h);
-            (CGEventType::MouseMoved, CGMouseButton::Left)
+            post_mouse(source, CGEventType::MouseMoved, *cursor, CGMouseButton::Left);
         }
-        Input::MouseButton { button, pressed } => match (button, pressed) {
-            (Button::Left, true) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
-            (Button::Left, false) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
-            (Button::Right, true) => (CGEventType::RightMouseDown, CGMouseButton::Right),
-            (Button::Right, false) => (CGEventType::RightMouseUp, CGMouseButton::Right),
-            (Button::Middle, true) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
-            (Button::Middle, false) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
-        },
-        // Scroll and keyboard arrive in M2d.
-        Input::Scroll { .. } | Input::Key { .. } => return,
-    };
+        Input::MouseButton { button, pressed } => {
+            let (event_type, cg_button) = match (button, pressed) {
+                (Button::Left, true) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
+                (Button::Left, false) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
+                (Button::Right, true) => (CGEventType::RightMouseDown, CGMouseButton::Right),
+                (Button::Right, false) => (CGEventType::RightMouseUp, CGMouseButton::Right),
+                (Button::Middle, true) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
+                (Button::Middle, false) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
+            };
+            post_mouse(source, event_type, *cursor, cg_button);
+        }
+        Input::Scroll { dx, dy } => {
+            // wheel1 = vertical, wheel2 = horizontal, in line units.
+            let (vertical, horizontal) = (dy.round() as i32, dx.round() as i32);
+            if let Ok(event) =
+                CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, vertical, horizontal, 0)
+            {
+                event.post(CGEventTapLocation::HID);
+            }
+        }
+        Input::Key { code, pressed } => {
+            if let Some(keycode) = hid_to_macos(code) {
+                if let Ok(event) = CGEvent::new_keyboard_event(source, keycode, pressed) {
+                    event.post(CGEventTapLocation::HID);
+                }
+            }
+        }
+    }
+}
+
+/// Post a mouse event of `event_type` at `pos` for `button`.
+fn post_mouse(source: CGEventSource, event_type: CGEventType, pos: (f64, f64), button: CGMouseButton) {
     if let Ok(event) =
-        CGEvent::new_mouse_event(source, event_type, CGPoint::new(cursor.0, cursor.1), button)
+        CGEvent::new_mouse_event(source, event_type, CGPoint::new(pos.0, pos.1), button)
     {
         event.post(CGEventTapLocation::HID);
     }
+}
+
+/// Map a USB-HID keyboard usage id (the platform-neutral code carried on the
+/// wire) to a macOS virtual keycode. Returns `None` for keys not yet mapped.
+#[rustfmt::skip]
+fn hid_to_macos(usage: u32) -> Option<u16> {
+    let keycode: u16 = match usage {
+        // Letters a–z.
+        0x04 => 0x00, 0x05 => 0x0B, 0x06 => 0x08, 0x07 => 0x02, 0x08 => 0x0E, 0x09 => 0x03,
+        0x0A => 0x05, 0x0B => 0x04, 0x0C => 0x22, 0x0D => 0x26, 0x0E => 0x28, 0x0F => 0x25,
+        0x10 => 0x2E, 0x11 => 0x2D, 0x12 => 0x1F, 0x13 => 0x23, 0x14 => 0x0C, 0x15 => 0x0F,
+        0x16 => 0x01, 0x17 => 0x11, 0x18 => 0x20, 0x19 => 0x09, 0x1A => 0x0D, 0x1B => 0x07,
+        0x1C => 0x10, 0x1D => 0x06,
+        // Digits 1–9, 0.
+        0x1E => 0x12, 0x1F => 0x13, 0x20 => 0x14, 0x21 => 0x15, 0x22 => 0x17, 0x23 => 0x16,
+        0x24 => 0x1A, 0x25 => 0x1C, 0x26 => 0x19, 0x27 => 0x1D,
+        // Enter, Escape, Backspace, Tab, Space.
+        0x28 => 0x24, 0x29 => 0x35, 0x2A => 0x33, 0x2B => 0x30, 0x2C => 0x31,
+        // Punctuation: - = [ ] \ ; ' ` , . /  and CapsLock.
+        0x2D => 0x1B, 0x2E => 0x18, 0x2F => 0x21, 0x30 => 0x1E, 0x31 => 0x2A, 0x33 => 0x29,
+        0x34 => 0x27, 0x35 => 0x32, 0x36 => 0x2B, 0x37 => 0x2F, 0x38 => 0x2C, 0x39 => 0x39,
+        // Arrows: right, left, down, up.
+        0x4F => 0x7C, 0x50 => 0x7B, 0x51 => 0x7D, 0x52 => 0x7E,
+        // Modifiers: L/R control, shift, alt(option), gui(command).
+        0xE0 => 0x3B, 0xE1 => 0x38, 0xE2 => 0x3A, 0xE3 => 0x37,
+        0xE4 => 0x3E, 0xE5 => 0x3C, 0xE6 => 0x3D, 0xE7 => 0x36,
+        _ => return None,
+    };
+    Some(keycode)
 }
 
 /// Drain encoded frames and write them to the client. Returns `Ok` on a clean
