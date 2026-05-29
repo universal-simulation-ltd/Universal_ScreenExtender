@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/core",
+    "crates/host",
+    "crates/client",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+extender-protocol = { path = "crates/protocol" }
+extender-core = { path = "crates/core" }

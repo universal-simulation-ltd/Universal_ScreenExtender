@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# Swift / Xcode
+native/**/.build/
+native/**/DerivedData/
+*.xcuserstate

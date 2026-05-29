@@ -1,0 +1,8 @@
+[package]
+name = "extender-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+extender-protocol.workspace = true

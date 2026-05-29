@@ -1,0 +1,9 @@
+[package]
+name = "extender-client"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+extender-core.workspace = true
+extender-protocol.workspace = true
