@@ -28,7 +28,7 @@ use winit::event::{
 };
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:9000";
 
@@ -596,6 +596,15 @@ impl ApplicationHandler for App {
         };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Focused(false) if self.grabbed => {
+                // Lost keyboard focus (e.g. a forwarded click focused an app on the
+                // virtual screen) — release control so the cursor is never stuck and
+                // local Esc/keys work again.
+                let _ = gpu.window.set_cursor_grab(CursorGrabMode::None);
+                gpu.window.set_cursor_visible(true);
+                self.grabbed = false;
+                println!("control mode OFF (focus lost)");
+            }
             WindowEvent::Resized(size) => gpu.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
                 gpu.render(&self.shared);
@@ -629,22 +638,32 @@ impl ApplicationHandler for App {
                 let _ = self.input_tx.send(Input::Scroll { dx, dy });
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.physical_key == PhysicalKey::Code(KeyCode::Escape)
-                    && event.state == ElementState::Pressed
-                    && self.grabbed
-                {
-                    let _ = gpu.window.set_cursor_grab(CursorGrabMode::None);
-                    gpu.window.set_cursor_visible(true);
-                    self.grabbed = false;
-                    println!("control mode OFF");
-                } else if self.grabbed {
-                    if let PhysicalKey::Code(code) = event.physical_key {
-                        if let Some(code) = key_to_hid(code) {
-                            let _ = self.input_tx.send(Input::Key {
-                                code,
-                                pressed: event.state == ElementState::Pressed,
-                            });
+                let pressed = event.state == ElementState::Pressed;
+                let key = match event.physical_key {
+                    PhysicalKey::Code(code) => Some(code),
+                    PhysicalKey::Unidentified(_) => None,
+                };
+                if self.grabbed {
+                    if key == Some(KeyCode::Escape) && pressed {
+                        // Release control back to the local machine.
+                        let _ = gpu.window.set_cursor_grab(CursorGrabMode::None);
+                        gpu.window.set_cursor_visible(true);
+                        self.grabbed = false;
+                        println!("control mode OFF");
+                    } else if let Some(hid) = key.and_then(key_to_hid) {
+                        // In control mode every other key goes to the host.
+                        let _ = self.input_tx.send(Input::Key { code: hid, pressed });
+                    }
+                } else if pressed {
+                    // Local window controls (F11 is reserved by macOS, so F/Esc).
+                    match key {
+                        Some(KeyCode::KeyF) => {
+                            let fs = gpu.window.fullscreen().is_some();
+                            gpu.window
+                                .set_fullscreen((!fs).then(|| Fullscreen::Borderless(None)));
                         }
+                        Some(KeyCode::Escape) => gpu.window.set_fullscreen(None),
+                        _ => {}
                     }
                 }
             }
@@ -675,6 +694,7 @@ fn main() {
         std::thread::spawn(move || run_network(addr, shared, input_rx));
     }
 
+    println!("controls: click to grab control · Esc to release · F (when not grabbed) = fullscreen");
     let event_loop = EventLoop::new().expect("create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App { shared, gpu: None, input_tx, grabbed: false };
