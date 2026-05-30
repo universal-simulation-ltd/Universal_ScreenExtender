@@ -23,7 +23,7 @@ fn main() {
     let before = CGDisplay::active_displays().unwrap_or_default();
     println!("active displays before: {before:?}");
 
-    let id = unsafe { extender_vdisplay_create(1920, 1080, 1) };
+    let id = unsafe { extender_vdisplay_create(1920, 1080, 2) };
     if id == 0 {
         eprintln!(
             "FAILED to create a virtual display — CGVirtualDisplay initWithDescriptor/applySettings \
@@ -46,10 +46,12 @@ fn main() {
     println!("active displays after:  {after:?}");
     if after.contains(&id) {
         let display = CGDisplay::new(id);
+        let mode = display.display_mode();
+        let (pw, ph) = mode.as_ref().map_or((0, 0), |m| (m.pixel_width(), m.pixel_height()));
+        let (lw, lh) = mode.as_ref().map_or((0, 0), |m| (m.width(), m.height()));
         println!(
-            "SUCCESS: virtual display {id} registered as {}x{} px (display count {} -> {}).",
-            display.pixels_wide(),
-            display.pixels_high(),
+            "SUCCESS: virtual display {id} — {pw}x{ph} px backing / {lw}x{lh} pt logical (scale {:.1}), count {} -> {}.",
+            pw as f64 / lw.max(1) as f64,
             before.len(),
             after.len()
         );

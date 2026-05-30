@@ -47,14 +47,22 @@
 
 static CGVirtualDisplay *g_display = nil;
 
-// Create one virtual display of the given pixel size. Returns its
-// CGDirectDisplayID, or 0 on failure. Retained for the process lifetime.
+// Create one virtual display. width/height are the LOGICAL (point) size; when
+// `hidpi` is non-zero the display is Retina (2x): the mode is created at the
+// native backing resolution (logical x 2) and settings.hiDPI = 1, which makes
+// the OS present it at the logical size (= backing / 2). Recipe per the
+// maintained force-hidpi project. Retained for the process lifetime; returns its
+// CGDirectDisplayID, or 0 on failure.
 uint32_t extender_vdisplay_create(uint32_t width, uint32_t height, uint32_t hidpi) {
+    uint32_t scale = hidpi ? 2 : 1;
+    uint32_t backing_w = width * scale;
+    uint32_t backing_h = height * scale;
+
     CGVirtualDisplayDescriptor *descriptor = [[CGVirtualDisplayDescriptor alloc] init];
     descriptor.queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
     descriptor.name = @"ExtenderScreen Virtual Display";
-    descriptor.maxPixelsWide = width;
-    descriptor.maxPixelsHigh = height;
+    descriptor.maxPixelsWide = backing_w * 2;
+    descriptor.maxPixelsHigh = backing_h * 2;
     descriptor.sizeInMillimeters = CGSizeMake(25.4 * width / 109.0, 25.4 * height / 109.0);
     descriptor.productID = 0x1234;
     descriptor.vendorID = 0x3456;
@@ -69,11 +77,13 @@ uint32_t extender_vdisplay_create(uint32_t width, uint32_t height, uint32_t hidp
         return 0;
     }
 
-    CGVirtualDisplayMode *mode = [[CGVirtualDisplayMode alloc] initWithWidth:width
-                                                                      height:height
+    // The mode is at the native backing resolution; settings.hiDPI = 1 makes it a
+    // Retina mode the OS presents at half (the logical) size.
+    CGVirtualDisplayMode *mode = [[CGVirtualDisplayMode alloc] initWithWidth:backing_w
+                                                                      height:backing_h
                                                                  refreshRate:60.0];
     CGVirtualDisplaySettings *settings = [[CGVirtualDisplaySettings alloc] init];
-    settings.hiDPI = hidpi;
+    settings.hiDPI = hidpi ? 1 : 0;
     settings.modes = @[ mode ];
 
     if (![display applySettings:settings]) {

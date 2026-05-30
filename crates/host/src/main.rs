@@ -30,6 +30,7 @@ const BITRATE: i32 = 20_000_000;
 const DEFAULT_ADDR: &str = "0.0.0.0:9000";
 const VDISPLAY_WIDTH: u32 = 1920;
 const VDISPLAY_HEIGHT: u32 = 1080;
+const VDISPLAY_SCALE: u32 = 2; // backing scale: 2 = Retina/HiDPI (native px = logical x 2)
 
 extern "C" {
     /// Create a virtual display (Objective-C shim); returns its CGDirectDisplayID
@@ -37,18 +38,24 @@ extern "C" {
     fn extender_vdisplay_create(width: u32, height: u32, hidpi: u32) -> u32;
 }
 
+/// A display's global bounds: origin x/y and width/height, in points.
+type Bounds = (f64, f64, f64, f64);
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_ADDR.to_string());
 
     // Create the virtual display we extend onto and wait for the window server to
     // register it, so capture can find it and input can target its bounds.
-    let virtual_id = unsafe { extender_vdisplay_create(VDISPLAY_WIDTH, VDISPLAY_HEIGHT, 0) };
+    let virtual_id = unsafe { extender_vdisplay_create(VDISPLAY_WIDTH, VDISPLAY_HEIGHT, VDISPLAY_SCALE) };
     if virtual_id == 0 {
         return Err("failed to create the virtual display (CGVirtualDisplay rejected it)".into());
     }
-    let bounds = wait_for_display(virtual_id)
+    let (bounds, capture) = wait_for_display(virtual_id)
         .ok_or("virtual display did not register with the window server")?;
-    println!("created virtual display {virtual_id} ({VDISPLAY_WIDTH}x{VDISPLAY_HEIGHT})");
+    println!(
+        "created virtual display {virtual_id}: {VDISPLAY_WIDTH}x{VDISPLAY_HEIGHT} pt @ {VDISPLAY_SCALE}x, capturing {}x{} px",
+        capture.0, capture.1
+    );
 
     let listener = TcpListener::bind(&addr)?;
     println!(
@@ -69,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .peer_addr()
             .map_or_else(|_| "?".to_string(), |a| a.to_string());
         println!("client connected: {peer}");
-        match serve(stream, virtual_id, bounds) {
+        match serve(stream, virtual_id, capture, bounds) {
             Ok(()) => println!("client {peer} disconnected"),
             Err(e) => eprintln!("session with {peer} ended: {e}"),
         }
@@ -78,16 +85,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Poll until display `id` is registered, returning its global bounds
-/// (origin x/y, width, height — in points) for input mapping.
-fn wait_for_display(id: u32) -> Option<(f64, f64, f64, f64)> {
+/// Poll until display `id` is registered, returning its global bounds (origin
+/// x/y, width, height — in points, for input mapping) and its native backing
+/// size (pixels, for capture — 2x the logical size on a HiDPI display).
+fn wait_for_display(id: u32) -> Option<(Bounds, (u32, u32))> {
     for _ in 0..50 {
         if CGDisplay::active_displays()
             .unwrap_or_default()
             .contains(&id)
         {
-            let b = CGDisplay::new(id).bounds();
-            return Some((b.origin.x, b.origin.y, b.size.width, b.size.height));
+            let display = CGDisplay::new(id);
+            let b = display.bounds();
+            let bounds = (b.origin.x, b.origin.y, b.size.width, b.size.height);
+            let native = display.display_mode().map_or(
+                (VDISPLAY_WIDTH * VDISPLAY_SCALE, VDISPLAY_HEIGHT * VDISPLAY_SCALE),
+                |m| (m.pixel_width() as u32, m.pixel_height() as u32),
+            );
+            return Some((bounds, native));
         }
         thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -100,7 +114,8 @@ fn wait_for_display(id: u32) -> Option<(f64, f64, f64, f64)> {
 fn serve(
     stream: TcpStream,
     virtual_id: u32,
-    bounds: (f64, f64, f64, f64),
+    capture: (u32, u32),
+    bounds: Bounds,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let content = SCShareableContent::get()?;
     let display = content
@@ -108,8 +123,10 @@ fn serve(
         .into_iter()
         .find(|d| d.display_id() == virtual_id)
         .ok_or("virtual display not in shareable content (is Screen Recording permission granted?)")?;
-    let (width, height) = (display.width(), display.height());
-    println!("capturing virtual display {virtual_id} at {width}x{height}");
+    // Capture at the display's native pixel size (2x logical on HiDPI) so the
+    // streamed frame keeps Retina detail instead of being downsampled to points.
+    let (width, height) = capture;
+    println!("capturing virtual display {virtual_id} at {width}x{height} px");
 
     let encoder = Arc::new(
         CompressionSession::builder(width as i32, height as i32, Codec::H264)
@@ -160,7 +177,7 @@ fn serve(
 /// Read input events from the client and inject them into the OS until the
 /// client disconnects. Pointer coordinates map from normalized frame space to
 /// the captured display's pixels.
-fn receive_and_inject(mut stream: TcpStream, bounds: (f64, f64, f64, f64)) {
+fn receive_and_inject(mut stream: TcpStream, bounds: Bounds) {
     let mut cursor = (bounds.0, bounds.1);
     while let Ok(input) = protocol::read_framed::<_, Input>(&mut stream) {
         inject(input, bounds, &mut cursor);
@@ -170,7 +187,7 @@ fn receive_and_inject(mut stream: TcpStream, bounds: (f64, f64, f64, f64)) {
 /// Inject one input event via CoreGraphics. `cursor` tracks the last pointer
 /// position so button and scroll events fire where the pointer is. Normalized
 /// pointer coords map into the virtual display's global `bounds`.
-fn inject(input: Input, bounds: (f64, f64, f64, f64), cursor: &mut (f64, f64)) {
+fn inject(input: Input, bounds: Bounds, cursor: &mut (f64, f64)) {
     let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
         return;
     };
