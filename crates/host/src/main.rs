@@ -26,7 +26,7 @@ use screencapturekit::prelude::*;
 use videotoolbox::prelude::*;
 
 const FPS: i32 = 60;
-const BITRATE: i32 = 20_000_000;
+const BITRATE: i32 = 40_000_000;
 const DEFAULT_ADDR: &str = "0.0.0.0:9000";
 const VDISPLAY_WIDTH: u32 = 1920;
 const VDISPLAY_HEIGHT: u32 = 1080;
