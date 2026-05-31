@@ -108,6 +108,30 @@ pub fn is_keyframe(codec: Codec, data: &[u8]) -> bool {
     })
 }
 
+/// Append the NAL units of an AVCC buffer (4-byte big-endian length prefixes, as
+/// VideoToolbox emits) to `out` in Annex-B form — each NAL prefixed with the
+/// start code `00 00 00 01`. This is the form software decoders like openh264
+/// expect, so a cross-platform client can feed frames straight through.
+pub fn append_annex_b(out: &mut Vec<u8>, avcc: &[u8]) {
+    for nal in nal_units(avcc) {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(nal);
+    }
+}
+
+/// Build an Annex-B stream from the raw parameter-set NALs (SPS/PPS) carried in
+/// [`Message::StreamStart`], each prefixed with a start code — used to prime a
+/// decoder before the first frame.
+#[must_use]
+pub fn annex_b_parameter_sets(parameter_sets: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for nal in parameter_sets {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
 /// Iterate the NAL unit payloads in an AVCC buffer (each prefixed by a 4-byte
 /// big-endian length). Stops at the first truncated or zero-length prefix.
 fn nal_units(mut data: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -230,5 +254,22 @@ mod tests {
         assert!(!is_keyframe(Codec::H264, &[0, 0, 0])); // shorter than one length prefix
         // Length prefix claims 9 bytes but only one follows — stop, don't peek.
         assert!(!is_keyframe(Codec::H264, &[0, 0, 0, 9, 0x65]));
+    }
+
+    #[test]
+    fn avcc_converts_to_annex_b() {
+        let stream = avcc(&[&[0x67, 0x42], &[0x65, 0x88, 0x84]]);
+        let mut out = Vec::new();
+        append_annex_b(&mut out, &stream);
+        assert_eq!(
+            out,
+            vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x65, 0x88, 0x84]
+        );
+    }
+
+    #[test]
+    fn parameter_sets_become_annex_b() {
+        let out = annex_b_parameter_sets(&[vec![0x67, 0x42], vec![0x68, 0xce]]);
+        assert_eq!(out, vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]);
     }
 }

@@ -1,25 +1,21 @@
-//! M1d client: connect to an `extender-host`, decode the streamed H.264, and
-//! render it live in a window. The receiver half of the network loopback.
+//! ExtenderScreen client: connect to an `extender-host`, decode the streamed
+//! H.264, render it live in a window, and capture local input to send back. The
+//! cross-platform receiver half (macOS / Windows / Linux).
 //!
-//! A network thread reconstructs a decodable `CMSampleBuffer` from each frame's
-//! bytes plus the SPS/PPS sent in `StreamStart`, decodes it (VideoToolbox emits
-//! NV12), converts NV12 -> BGRA via a `PixelTransferSession`, and stashes the
-//! packed pixels for the wgpu render loop on the main thread — the same render
-//! path validated by the host's `loopback_viewer` example.
+//! A network thread converts each frame's AVCC bytes (plus the SPS/PPS from
+//! `StreamStart`) to Annex-B, decodes them with openh264 (software, portable)
+//! into RGBA, and stashes the pixels for the wgpu render loop on the main thread.
 //!
 //! Run: cargo run -p extender-client [-- HOST_ADDR]   (default 127.0.0.1:9000)
 
 use std::io::BufReader;
 use std::net::TcpStream;
-use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use apple_cf::cm::{CMBlockBuffer, CMFormatDescription, CMSampleBuffer};
-use apple_cf::cv::{CVPixelBuffer, CVPixelBufferLockFlags};
-use apple_cf::raw;
-use extender_protocol::{self as protocol, Button, Codec as WireCodec, Input, Message};
-use videotoolbox::{DecodedFrame, DecompressionSession, PixelTransferSession};
+use extender_protocol::{self as protocol, Button, Input, Message};
+use openh264::decoder::Decoder;
+use openh264::formats::YUVSource;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -32,11 +28,11 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:9000";
 
-/// One decoded frame, tightly packed BGRA (stride == width * 4).
+/// One decoded frame, tightly packed RGBA (stride == width * 4).
 struct Frame {
     width: u32,
     height: u32,
-    bgra: Vec<u8>,
+    rgba: Vec<u8>,
 }
 
 type Shared = Arc<Mutex<Option<Frame>>>;
@@ -66,8 +62,8 @@ fn connect_and_stream(
     std::thread::spawn(move || input_writer(input_stream, input_rx));
     let mut reader = BufReader::new(stream);
 
-    let mut format: Option<CMFormatDescription> = None;
-    let mut decoder: Option<DecompressionSession> = None;
+    let mut decoder: Option<Decoder> = None;
+    let mut sps_pps: Vec<u8> = Vec::new();
 
     loop {
         let message: Message = match protocol::read_framed(&mut reader) {
@@ -81,18 +77,29 @@ fn connect_and_stream(
         match message {
             Message::StreamStart { width, height, codec, parameter_sets } => {
                 println!("stream: {width}x{height} {codec:?}");
-                let fmt = build_format_description(codec, &parameter_sets)
-                    .ok_or("failed to rebuild format description from parameter sets")?;
-                decoder = Some(make_decoder(&fmt, width, height, shared.clone())?);
-                format = Some(fmt);
+                sps_pps = protocol::annex_b_parameter_sets(&parameter_sets);
+                decoder = Some(Decoder::new()?);
             }
-            Message::Frame { pts_value, pts_timescale, data, .. } => {
-                let (Some(format), Some(decoder)) = (format.as_ref(), decoder.as_ref()) else {
+            Message::Frame { keyframe, data, .. } => {
+                let Some(decoder) = decoder.as_mut() else {
                     return Err("Frame arrived before StreamStart".into());
                 };
-                let sample = reassemble_sample(format, &data, (pts_value, pts_timescale))
-                    .ok_or("failed to reassemble CMSampleBuffer")?;
-                decoder.decode(&sample)?;
+                // Build an Annex-B access unit; prepend SPS/PPS on keyframes so the
+                // decoder always has parameters to lock onto.
+                let mut au = if keyframe { sps_pps.clone() } else { Vec::new() };
+                protocol::append_annex_b(&mut au, &data);
+                match decoder.decode(&au) {
+                    Ok(Some(yuv)) => {
+                        let (w, h) = yuv.dimensions();
+                        let mut rgba = vec![0u8; yuv.rgba8_len()];
+                        yuv.write_rgba8(&mut rgba);
+                        if let Ok(mut slot) = shared.lock() {
+                            *slot = Some(Frame { width: w as u32, height: h as u32, rgba });
+                        }
+                    }
+                    Ok(None) => {} // decoder needs more data before it emits a picture
+                    Err(e) => eprintln!("decode error: {e}"),
+                }
             }
         }
     }
@@ -154,131 +161,6 @@ fn key_to_hid(code: KeyCode) -> Option<u32> {
         _ => return None,
     };
     Some(usage)
-}
-
-/// Build a decompression session whose callback converts each decoded NV12 frame
-/// to BGRA and publishes the packed pixels to `shared`.
-fn make_decoder(
-    format: &CMFormatDescription,
-    width: u32,
-    height: u32,
-    shared: Shared,
-) -> Result<DecompressionSession, Box<dyn std::error::Error>> {
-    let transfer = PixelTransferSession::new()?;
-    transfer.set_real_time(true)?;
-    // Reused destination: VideoToolbox decodes to NV12, we present BGRA.
-    let bgra = CVPixelBuffer::create(width as usize, height as usize, u32::from_be_bytes(*b"BGRA"))
-        .map_err(|e| format!("failed to allocate BGRA pixel buffer: {e}"))?;
-
-    let session = DecompressionSession::new(format, move |f: DecodedFrame| {
-        let Some(nv12) = f.image_buffer else {
-            return;
-        };
-        if transfer.transfer(&nv12, &bgra).is_err() {
-            return;
-        }
-        let Ok(guard) = bgra.lock(CVPixelBufferLockFlags::READ_ONLY) else {
-            return;
-        };
-        let w = guard.width();
-        let h = guard.height();
-        let stride = guard.bytes_per_row();
-        let row = w * 4;
-        let src = guard.as_slice();
-        if w == 0 || h == 0 || stride < row || src.len() < stride * h {
-            return;
-        }
-        let mut packed = vec![0u8; row * h];
-        for y in 0..h {
-            packed[y * row..y * row + row].copy_from_slice(&src[y * stride..y * stride + row]);
-        }
-        drop(guard);
-        if let Ok(mut slot) = shared.lock() {
-            *slot = Some(Frame { width: w as u32, height: h as u32, bgra: packed });
-        }
-    })?;
-    session.set_real_time(true)?;
-    Ok(session)
-}
-
-/// Rebuild a `CMVideoFormatDescription` from the stream's parameter sets.
-fn build_format_description(
-    codec: WireCodec,
-    parameter_sets: &[Vec<u8>],
-) -> Option<CMFormatDescription> {
-    if parameter_sets.is_empty() {
-        return None;
-    }
-    let pointers: Vec<*const u8> = parameter_sets.iter().map(|s| s.as_ptr()).collect();
-    let sizes: Vec<usize> = parameter_sets.iter().map(Vec::len).collect();
-    let mut out: raw::CMFormatDescriptionRef = ptr::null();
-    // VideoToolbox emits AVCC with 4-byte NAL length prefixes; tell the decoder
-    // the same so it can find NAL boundaries within each sample.
-    let status = unsafe {
-        match codec {
-            WireCodec::H264 => raw::CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                ptr::null(),
-                pointers.len(),
-                pointers.as_ptr(),
-                sizes.as_ptr(),
-                4,
-                &mut out,
-            ),
-            WireCodec::Hevc => raw::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                ptr::null(),
-                pointers.len(),
-                pointers.as_ptr(),
-                sizes.as_ptr(),
-                4,
-                ptr::null(),
-                &mut out,
-            ),
-        }
-    };
-    if status != 0 || out.is_null() {
-        return None;
-    }
-    CMFormatDescription::from_raw(out as *mut _)
-}
-
-/// Wrap AVCC frame bytes in a `CMBlockBuffer` and assemble a ready
-/// `CMSampleBuffer` the decoder can consume.
-fn reassemble_sample(
-    format: &CMFormatDescription,
-    data: &[u8],
-    pts: (i64, i32),
-) -> Option<CMSampleBuffer> {
-    let block = CMBlockBuffer::create(data)?;
-    let timing = raw::CMSampleTimingInfo {
-        duration: cm_time(1, pts.1),
-        presentationTimeStamp: cm_time(pts.0, pts.1),
-        // Invalid DTS (flags = 0) tells CoreMedia decode order == PTS order.
-        decodeTimeStamp: raw::CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
-    };
-    let size = data.len();
-    let mut out: raw::CMSampleBufferRef = ptr::null_mut();
-    let status = unsafe {
-        raw::CMSampleBufferCreateReady(
-            ptr::null(),
-            block.as_ptr() as _,
-            format.as_ptr() as _,
-            1,
-            1,
-            &timing,
-            1,
-            &size,
-            &mut out,
-        )
-    };
-    if status != 0 || out.is_null() {
-        return None;
-    }
-    CMSampleBuffer::from_raw(out.cast())
-}
-
-/// Construct a valid `CMTime` (the `kCMTimeFlags_Valid` bit set).
-const fn cm_time(value: i64, timescale: i32) -> raw::CMTime {
-    raw::CMTime { value, timescale, flags: 1, epoch: 0 }
 }
 
 // ---- rendering (mirrors the host's loopback_viewer example) --------------
@@ -461,7 +343,7 @@ impl Gpu {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -502,7 +384,7 @@ impl Gpu {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &frame.bgra,
+                &frame.rgba,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(frame.width * 4),
@@ -582,7 +464,7 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("ExtenderScreen client (M1d)")
+            .with_title("ExtenderScreen client")
             .with_inner_size(LogicalSize::new(1280.0, 720.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let gpu = pollster::block_on(Gpu::new(window.clone()));
