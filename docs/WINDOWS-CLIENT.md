@@ -87,14 +87,24 @@ cargo run --release -p extender-client -- 192.168.1.42:9000
 Replace **`192.168.1.42`** with your Mac's IP from step 3. (The first build
 compiles OpenH264 from source, so it takes a minute or two.)
 
-On startup the client lists your monitors and reports the chosen one's **native
-(physical) resolution** to the host, which sizes the virtual display to match.
-With **multiple monitors**, pass a monitor index (from that list) as a 2nd arg to
-pick which one to mirror the size of:
+On startup the client lists your monitors and a set of **resolution presets**
+(percentages of the chosen monitor's native size, each keeping its aspect ratio),
+then reports the selected one to the host, which sizes the virtual display to
+match. By default it uses preset `[0]` — full native resolution.
 
-```
-cargo run --release -p extender-client -- 192.168.1.42:9000 1
-```
+- **Pick a lower resolution** (lighter to decode, still correct aspect ratio)
+  with `--res N`, where `N` is a preset index from the list:
+  ```
+  cargo run --release -p extender-client -- 192.168.1.42:9000 --res 2
+  ```
+- **Pick a monitor** (when several are attached) with `--monitor N`:
+  ```
+  cargo run --release -p extender-client -- 192.168.1.42:9000 --monitor 1 --res 1
+  ```
+
+To change resolution after launch, just stop the client (Esc out, close the
+window) and re-run with a different `--res` — the host recreates its virtual
+display to match on reconnect.
 
 A window titled **"ExtenderScreen client"** opens showing the Mac's virtual
 screen (blank at first — it's an empty second desktop).
@@ -122,7 +132,7 @@ screen (blank at first — it's an empty second desktop).
 | Build error about a linker / `link.exe` / `cl.exe` | Install the Visual Studio "Desktop development with C++" workload. |
 | `client error: ... Connection refused` / times out | Host isn't running, wrong IP, not on the same LAN, or the macOS firewall is blocking — re-check step 3. |
 | Window is black | Nothing is on the virtual display yet — drag a window onto it on the Mac (step 5). |
-| Choppy / high CPU | Software decode is CPU-bound, and the client now auto-selects your **native** resolution (e.g. 2880×1800 on a HiDPI laptop), which is ~2× the pixels of its scaled size. Make sure you used `--release`; if it's still heavy, force a smaller size on the host (step 3, e.g. `... 1920x1200`). |
+| Choppy / high CPU | Software decode is CPU-bound, and the client defaults to your **native** resolution (e.g. 2880×1800 on a HiDPI laptop), ~2× the pixels of its scaled size. Make sure you used `--release`; if it's still heavy, pick a lower preset with `--res N` (step 4) or force a size on the host (step 3, e.g. `... 1920x1200`). |
 | Colors look wrong | File an issue — the client decodes to RGBA; a swap would be a small fix. |
 
 ---

@@ -31,6 +31,11 @@ const DEFAULT_ADDR: &str = "127.0.0.1:9000";
 /// Resolution reported to the host when no monitor can be enumerated.
 const FALLBACK_RES: (u32, u32) = (1920, 1080);
 
+/// Resolution presets offered to the user, as a percentage of the monitor's
+/// native size. Each keeps the panel's aspect ratio (a uniform scale); pick one
+/// with `--res N` (default `[0]`, native). Index into this list.
+const SCALE_PRESETS: [u32; 4] = [100, 75, 67, 50];
+
 /// One decoded frame, tightly packed RGBA (stride == width * 4).
 struct Frame {
     width: u32,
@@ -458,11 +463,11 @@ impl Gpu {
     }
 }
 
-/// Pick the monitor whose full panel resolution we advertise to the host, in
-/// physical pixels. `index` selects from `available_monitors()` (in order);
-/// otherwise the primary monitor is used. Falls back to the window's current
-/// monitor, then [`FALLBACK_RES`], if enumeration comes up empty.
-fn resolve_resolution(
+/// Pick the monitor whose native (physical-pixel) size to base the resolution
+/// on. `index` selects from `available_monitors()` (in order); otherwise the
+/// primary monitor is used. Falls back to the window's current monitor, then
+/// [`FALLBACK_RES`], if enumeration comes up empty.
+fn native_resolution(
     event_loop: &ActiveEventLoop,
     window: &Window,
     index: Option<usize>,
@@ -495,8 +500,46 @@ fn resolve_resolution(
         None => primary.as_ref().unwrap_or(&monitors[0]),
     };
     let s = chosen.size();
-    println!("reporting {}x{} to host", s.width, s.height);
     (s.width, s.height)
+}
+
+/// Scale `native` by `percent`, preserving aspect ratio. Both dimensions are
+/// rounded down to even numbers (H.264 encoders require even width/height).
+fn scaled_even(native: (u32, u32), percent: u32) -> (u32, u32) {
+    let w = (native.0 * percent / 100 & !1).max(2);
+    let h = (native.1 * percent / 100 & !1).max(2);
+    (w, h)
+}
+
+/// Resolve the resolution to advertise: pick the monitor's native size, then
+/// apply the chosen [`SCALE_PRESETS`] entry (default `[0]`, native). Prints the
+/// preset menu so the user can re-run with a different `--res N`.
+fn resolve_resolution(
+    event_loop: &ActiveEventLoop,
+    window: &Window,
+    monitor_index: Option<usize>,
+    res_index: Option<usize>,
+) -> (u32, u32) {
+    let native = native_resolution(event_loop, window, monitor_index);
+
+    println!("resolution presets (pick with --res N):");
+    for (i, &pct) in SCALE_PRESETS.iter().enumerate() {
+        let (w, h) = scaled_even(native, pct);
+        println!("  [{i}] {w}x{h} ({pct}%)");
+    }
+
+    let idx = match res_index {
+        Some(i) if i < SCALE_PRESETS.len() => i,
+        Some(i) => {
+            eprintln!("res index {i} out of range; using [0] (native)");
+            0
+        }
+        None => 0,
+    };
+    let pct = SCALE_PRESETS[idx];
+    let (w, h) = scaled_even(native, pct);
+    println!("reporting [{idx}] {w}x{h} ({pct}%) to host");
+    (w, h)
 }
 
 struct App {
@@ -506,9 +549,11 @@ struct App {
     /// Taken in `resumed` once the resolution is known, then moved to the network
     /// thread. `None` after the network thread has started.
     input_rx: Option<Receiver<Input>>,
-    /// Host address to connect to, and the optional monitor index to report.
+    /// Host address to connect to, plus the optional monitor and resolution-preset
+    /// indices chosen on the command line.
     addr: String,
     monitor_index: Option<usize>,
+    res_index: Option<usize>,
     /// Whether the pointer is locked and we're forwarding input to the host.
     grabbed: bool,
 }
@@ -526,7 +571,8 @@ impl ApplicationHandler for App {
         // Now that winit can enumerate monitors, pick the resolution to advertise
         // and start the network thread (deferred from main until this is known).
         if let Some(input_rx) = self.input_rx.take() {
-            let (width, height) = resolve_resolution(event_loop, &window, self.monitor_index);
+            let (width, height) =
+                resolve_resolution(event_loop, &window, self.monitor_index, self.res_index);
             let hello = ClientHello {
                 protocol_version: protocol::PROTOCOL_VERSION,
                 width,
@@ -636,11 +682,29 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Parse the command line: one positional `HOST_ADDR`, plus optional
+/// `--monitor N` / `-m N` and `--res N` / `-r N` flags.
+fn parse_args() -> (String, Option<usize>, Option<usize>) {
+    let mut addr: Option<String> = None;
+    let mut monitor_index = None;
+    let mut res_index = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--monitor" | "-m" => monitor_index = args.next().and_then(|s| s.parse().ok()),
+            "--res" | "-r" => res_index = args.next().and_then(|s| s.parse().ok()),
+            _ if arg.starts_with('-') => eprintln!("ignoring unknown flag: {arg}"),
+            _ if addr.is_none() => addr = Some(arg),
+            _ => eprintln!("ignoring extra argument: {arg}"),
+        }
+    }
+    (addr.unwrap_or_else(|| DEFAULT_ADDR.to_string()), monitor_index, res_index)
+}
+
 fn main() {
-    // Args: [HOST_ADDR] [MONITOR_INDEX]. The network thread starts in `resumed`
-    // once winit can enumerate monitors (we need the chosen monitor's size first).
-    let addr = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_ADDR.to_string());
-    let monitor_index = std::env::args().nth(2).and_then(|s| s.parse::<usize>().ok());
+    // The network thread starts in `resumed` once winit can enumerate monitors
+    // (we need the chosen monitor's size before we can send the hello).
+    let (addr, monitor_index, res_index) = parse_args();
     let shared: Shared = Arc::new(Mutex::new(None));
     let (input_tx, input_rx) = mpsc::channel::<Input>();
 
@@ -654,6 +718,7 @@ fn main() {
         input_rx: Some(input_rx),
         addr,
         monitor_index,
+        res_index,
         grabbed: false,
     };
     event_loop.run_app(&mut app).expect("run app");
