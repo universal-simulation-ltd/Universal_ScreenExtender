@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -41,6 +43,7 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -205,6 +208,9 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
     var nextPreview by remember { mutableStateOf<ImageBitmap?>(null) }
     var prevPreview by remember { mutableStateOf<ImageBitmap?>(null) }
     var scanned by remember { mutableStateOf(false) }
+    var windowList by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
+    var windowMenuOpen by remember { mutableStateOf(false) }
+    var showMore by remember { mutableStateOf(false) }
     DisposableEffect(session) {
         session.startPump(object : ExtenderSession.FrameSink {
             override fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray) {}
@@ -222,6 +228,9 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
             }
             override fun onHostInfo(os: String, name: String) {
                 ConnectionStore.setIdentity(context, addr, os, name)
+            }
+            override fun onWindowList(windows: List<Pair<Long, String>>) {
+                runOnUi { windowList = windows }
             }
             override fun onEnded() {}
         })
@@ -243,9 +252,33 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
         } else {
             Text("Waiting for slide preview…", style = MaterialTheme.typography.bodyMedium)
         }
-        // Build (or rebuild) the look-ahead cache; the label reflects the state.
-        Button(onClick = { session.scanDeck(); scanned = true }) {
-            Text(if (scanned) "Rescan deck" else "Scan deck")
+        // Build (or rebuild) the look-ahead cache, and pick which host window gets
+        // the keystrokes (in case the document lost focus).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(onClick = { session.scanDeck(); scanned = true }) {
+                Text(if (scanned) "Rescan deck" else "Scan deck")
+            }
+            Box {
+                Button(onClick = { session.listWindows(); windowMenuOpen = true }) {
+                    Text("Focus window ▾")
+                }
+                DropdownMenu(expanded = windowMenuOpen, onDismissRequest = { windowMenuOpen = false }) {
+                    if (windowList.isEmpty()) {
+                        DropdownMenuItem(text = { Text("No windows") }, onClick = { windowMenuOpen = false })
+                    } else {
+                        windowList.forEach { (id, title) ->
+                            DropdownMenuItem(
+                                text = { Text(title, maxLines = 1) },
+                                onClick = { session.focusWindow(id); windowMenuOpen = false },
+                            )
+                        }
+                    }
+                }
+            }
         }
         if (!scanned) {
             Text(
@@ -269,19 +302,25 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
                 BigButton("Next  ▶") { session.tapKey(HidKeys.PAGE_DOWN) }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Button(onClick = { session.tapKey(HidKeys.HOME) }) { Text("First") }
-            Button(onClick = { session.tapKey(HidKeys.END) }) { Text("Last") }
+        // Keep the remote uncluttered: the secondary actions hide behind a toggle.
+        TextButton(onClick = { showMore = !showMore }) {
+            Text(if (showMore) "Fewer options" else "More options")
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            // No universal "blank" key: PowerPoint uses B (black), Keynote / Google
-            // Slides use '.' — so expose both (see docs/M6-presentation-clicker.md).
-            Button(onClick = { session.tapKey(HidKeys.B) }) { Text("Blank (PPT)") }
-            Button(onClick = { session.tapKey(HidKeys.PERIOD) }) { Text("Blank (.)") }
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Button(onClick = { session.tapKey(HidKeys.F5) }) { Text("Start (F5)") }
-            Button(onClick = { session.tapKey(HidKeys.ESCAPE) }) { Text("End (Esc)") }
+        if (showMore) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { session.tapKey(HidKeys.HOME) }) { Text("First") }
+                Button(onClick = { session.tapKey(HidKeys.END) }) { Text("Last") }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                // No universal "blank" key: PowerPoint uses B (black), Keynote / Google
+                // Slides use '.' — so expose both (see docs/M6-presentation-clicker.md).
+                Button(onClick = { session.tapKey(HidKeys.B) }) { Text("Blank (PPT)") }
+                Button(onClick = { session.tapKey(HidKeys.PERIOD) }) { Text("Blank (.)") }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { session.tapKey(HidKeys.F5) }) { Text("Start (F5)") }
+                Button(onClick = { session.tapKey(HidKeys.ESCAPE) }) { Text("End (Esc)") }
+            }
         }
     }
 }
@@ -293,8 +332,9 @@ private fun BigButton(label: String, onClick: () -> Unit) {
     }
 }
 
-/** A 150dp-wide slide thumbnail above a nav button; an empty box before a scan.
- *  [dim] fades the previous-slide preview so the next one stands out. */
+/** A 150dp-wide slide thumbnail above a nav button. When there's no slide (the
+ *  ends of the deck, or before a scan) it shows the ScreenExtender icon as a
+ *  placeholder. [dim] fades the previous-slide preview so the next one stands out. */
 @Composable
 private fun PreviewTile(bitmap: ImageBitmap?, dim: Boolean, label: String) {
     val mod = Modifier.width(150.dp).aspectRatio(16f / 9f)
@@ -307,7 +347,14 @@ private fun PreviewTile(bitmap: ImageBitmap?, dim: Boolean, label: String) {
             modifier = mod,
         )
     } else {
-        Box(mod) // placeholder keeps the buttons aligned before a scan
+        Box(mod, contentAlignment = Alignment.Center) {
+            Image(
+                painter = painterResource(R.drawable.ic_screenextender),
+                contentDescription = "ScreenExtender",
+                modifier = Modifier.size(40.dp),
+                alpha = 0.3f,
+            )
+        }
     }
 }
 

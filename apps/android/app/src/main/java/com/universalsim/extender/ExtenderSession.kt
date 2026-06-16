@@ -22,6 +22,8 @@ class ExtenderSession private constructor(private var handle: Long) {
         fun onSnapshot(width: Int, height: Int, slot: Int, jpeg: ByteArray) {}
         /** The host's identity (OS tag + machine name); default no-op. */
         fun onHostInfo(os: String, name: String) {}
+        /** The host's open windows as (id, title) pairs (for the focus picker). */
+        fun onWindowList(windows: List<Pair<Long, String>>) {}
         fun onEnded()
     }
 
@@ -70,6 +72,16 @@ class ExtenderSession private constructor(private var handle: Long) {
                             .split("\n", limit = 2)
                         sink.onHostInfo(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
                     }
+                    4 -> {
+                        // WindowList payload is one "id\ttitle" line per window.
+                        val text = String(ExtenderNative.nativeEventData(handle) ?: ByteArray(0))
+                        val windows = if (text.isEmpty()) emptyList() else text.split("\n").mapNotNull { line ->
+                            val tab = line.indexOf('\t')
+                            val id = if (tab > 0) line.substring(0, tab).toLongOrNull() else null
+                            if (id == null) null else id to line.substring(tab + 1)
+                        }
+                        sink.onWindowList(windows)
+                    }
                     else -> {
                         pumping = false
                         sink.onEnded()
@@ -95,6 +107,10 @@ class ExtenderSession private constructor(private var handle: Long) {
     fun sendText(text: String) = ifLive { ExtenderNative.nativeSendText(handle, text) }
     /** Ask the host to pre-scan the deck so it can preview the next slide. */
     fun scanDeck() = ifLive { ExtenderNative.nativeScanDeck(handle) }
+    /** Ask the host to (re)send its open-window list. */
+    fun listWindows() = ifLive { ExtenderNative.nativeListWindows(handle) }
+    /** Bring the host window with [id] to the foreground. */
+    fun focusWindow(id: Long) = ifLive { ExtenderNative.nativeFocusWindow(handle, id) }
 
     private inline fun ifLive(block: () -> Unit) {
         if (handle != 0L) block()

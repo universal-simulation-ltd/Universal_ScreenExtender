@@ -35,4 +35,10 @@ object ExtenderNative {
 
     /** Ask the host to pre-scan the open document for next-slide look-ahead. */
     external fun nativeScanDeck(handle: Long)
+
+    /** Ask the host to (re)send its list of open windows. */
+    external fun nativeListWindows(handle: Long)
+
+    /** Bring the host window with [id] (from a WindowList event) to the foreground. */
+    external fun nativeFocusWindow(handle: Long, id: Long)
 }
