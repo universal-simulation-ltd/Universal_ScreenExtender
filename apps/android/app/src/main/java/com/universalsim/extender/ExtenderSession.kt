@@ -14,8 +14,12 @@ class ExtenderSession private constructor(private var handle: Long) {
     interface FrameSink {
         fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray)
         fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long)
-        /** A still JPEG slide preview (clicker mode); default no-op for video sinks. */
-        fun onSnapshot(width: Int, height: Int, jpeg: ByteArray) {}
+        /**
+         * A still JPEG slide preview (clicker mode); default no-op for video sinks.
+         * [slot] is the slide's offset from the current position: 0 = current,
+         * -1 = previous, +1 = next. [jpeg] is empty when there's no slide there.
+         */
+        fun onSnapshot(width: Int, height: Int, slot: Int, jpeg: ByteArray) {}
         /** The host's identity (OS tag + machine name); default no-op. */
         fun onHostInfo(os: String, name: String) {}
         fun onEnded()
@@ -57,6 +61,7 @@ class ExtenderSession private constructor(private var handle: Long) {
                     2 -> sink.onSnapshot(
                         ExtenderNative.nativeEventWidth(handle),
                         ExtenderNative.nativeEventHeight(handle),
+                        ExtenderNative.nativeEventCodec(handle), // codec field carries the slot
                         ExtenderNative.nativeEventData(handle) ?: ByteArray(0),
                     )
                     3 -> {
@@ -88,6 +93,8 @@ class ExtenderSession private constructor(private var handle: Long) {
     fun sendSecondaryClick(x: Float, y: Float) = ifLive { ExtenderNative.nativeSendSecondaryClick(handle, x, y) }
     fun sendScroll(dx: Float, dy: Float) = ifLive { ExtenderNative.nativeSendScroll(handle, dx, dy) }
     fun sendText(text: String) = ifLive { ExtenderNative.nativeSendText(handle, text) }
+    /** Ask the host to pre-scan the deck so it can preview the next slide. */
+    fun scanDeck() = ifLive { ExtenderNative.nativeScanDeck(handle) }
 
     private inline fun ifLive(block: () -> Unit) {
         if (handle != 0L) block()

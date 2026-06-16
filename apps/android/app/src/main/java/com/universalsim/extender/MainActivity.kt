@@ -202,13 +202,23 @@ private fun SavedConnectionRow(
 fun ClickerScreen(session: ExtenderSession, addr: String) {
     val context = LocalContext.current
     var preview by remember { mutableStateOf<ImageBitmap?>(null) }
+    var nextPreview by remember { mutableStateOf<ImageBitmap?>(null) }
+    var prevPreview by remember { mutableStateOf<ImageBitmap?>(null) }
+    var scanned by remember { mutableStateOf(false) }
     DisposableEffect(session) {
         session.startPump(object : ExtenderSession.FrameSink {
             override fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray) {}
             override fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long) {}
-            override fun onSnapshot(width: Int, height: Int, jpeg: ByteArray) {
-                val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
-                runOnUi { preview = bmp.asImageBitmap() }
+            override fun onSnapshot(width: Int, height: Int, slot: Int, jpeg: ByteArray) {
+                // Empty jpeg for an adjacent slot means "no slide there" -> clear it.
+                val bmp = if (jpeg.isEmpty()) null else BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+                runOnUi {
+                    when {
+                        slot < 0 -> prevPreview = bmp?.asImageBitmap()
+                        slot > 0 -> nextPreview = bmp?.asImageBitmap()
+                        bmp != null -> preview = bmp.asImageBitmap()
+                    }
+                }
             }
             override fun onHostInfo(os: String, name: String) {
                 ConnectionStore.setIdentity(context, addr, os, name)
@@ -218,8 +228,8 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
         onDispose { }
     }
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val slide = preview
@@ -233,9 +243,31 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
         } else {
             Text("Waiting for slide preview…", style = MaterialTheme.typography.bodyMedium)
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            BigButton("◀  Prev") { session.tapKey(HidKeys.PAGE_UP) }
-            BigButton("Next  ▶") { session.tapKey(HidKeys.PAGE_DOWN) }
+        // Build (or rebuild) the look-ahead cache; the label reflects the state.
+        Button(onClick = { session.scanDeck(); scanned = true }) {
+            Text(if (scanned) "Rescan deck" else "Scan deck")
+        }
+        if (!scanned) {
+            Text(
+                "Tap Scan deck to preview the previous/next slides (keep the document focused).",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        // Prev / Next, each with its slide preview above it. The previous slide is
+        // dimmed so the focus stays on what's coming next.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PreviewTile(prevPreview, dim = true, label = "Previous slide")
+                BigButton("◀  Prev") { session.tapKey(HidKeys.PAGE_UP) }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PreviewTile(nextPreview, dim = false, label = "Next slide")
+                BigButton("Next  ▶") { session.tapKey(HidKeys.PAGE_DOWN) }
+            }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             Button(onClick = { session.tapKey(HidKeys.HOME) }) { Text("First") }
@@ -258,6 +290,24 @@ fun ClickerScreen(session: ExtenderSession, addr: String) {
 private fun BigButton(label: String, onClick: () -> Unit) {
     Button(onClick = onClick, modifier = Modifier.size(width = 150.dp, height = 90.dp)) {
         Text(label, style = MaterialTheme.typography.titleLarge)
+    }
+}
+
+/** A 150dp-wide slide thumbnail above a nav button; an empty box before a scan.
+ *  [dim] fades the previous-slide preview so the next one stands out. */
+@Composable
+private fun PreviewTile(bitmap: ImageBitmap?, dim: Boolean, label: String) {
+    val mod = Modifier.width(150.dp).aspectRatio(16f / 9f)
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = label,
+            contentScale = ContentScale.Fit,
+            alpha = if (dim) 0.4f else 1f,
+            modifier = mod,
+        )
+    } else {
+        Box(mod) // placeholder keeps the buttons aligned before a scan
     }
 }
 

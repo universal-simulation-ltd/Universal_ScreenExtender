@@ -32,4 +32,7 @@ object ExtenderNative {
     external fun nativeSendTouch(handle: Long, id: Int, phase: Int, x: Float, y: Float)
     external fun nativeSendSecondaryClick(handle: Long, x: Float, y: Float)
     external fun nativeSendText(handle: Long, text: String)
+
+    /** Ask the host to pre-scan the open document for next-slide look-ahead. */
+    external fun nativeScanDeck(handle: Long)
 }
