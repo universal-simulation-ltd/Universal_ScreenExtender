@@ -587,6 +587,48 @@ mod tests {
     }
 
     #[test]
+    fn page_index_tracks_nav_keys_and_clamps_to_the_deck() {
+        let mut idx = 0;
+        apply_index(&mut idx, 0x4E, 5); // PageDown
+        assert_eq!(idx, 1);
+        apply_index(&mut idx, 0x4F, 5); // Right
+        assert_eq!(idx, 2);
+        apply_index(&mut idx, 0x4B, 5); // PageUp
+        assert_eq!(idx, 1);
+        apply_index(&mut idx, 0x4A, 5); // Home -> first
+        assert_eq!(idx, 0);
+        apply_index(&mut idx, 0x4B, 5); // PageUp at start clamps
+        assert_eq!(idx, 0);
+        apply_index(&mut idx, 0x4D, 5); // End -> last
+        assert_eq!(idx, 4);
+        apply_index(&mut idx, 0x4E, 5); // PageDown at end clamps
+        assert_eq!(idx, 4);
+    }
+
+    #[test]
+    fn page_index_ignores_non_nav_keys() {
+        let mut idx = 3;
+        apply_index(&mut idx, 0, 5); // Text / no-op code
+        assert_eq!(idx, 3);
+        apply_index(&mut idx, 0x04, 5); // a letter
+        assert_eq!(idx, 3);
+    }
+
+    #[test]
+    fn page_index_has_no_upper_clamp_before_a_scan() {
+        // With no cached pages the upper bound is unknown, so it just tracks deltas.
+        let mut idx = 0;
+        apply_index(&mut idx, 0x4E, 0);
+        apply_index(&mut idx, 0x4E, 0);
+        assert_eq!(idx, 2);
+        apply_index(&mut idx, 0x4B, 0);
+        assert_eq!(idx, 1);
+        apply_index(&mut idx, 0x4B, 0);
+        apply_index(&mut idx, 0x4B, 0);
+        assert_eq!(idx, 0); // never negative
+    }
+
+    #[test]
     fn arrows_and_nav_are_extended_but_letters_are_not() {
         assert!(is_extended(VK_RIGHT));
         assert!(is_extended(VK_NEXT));
