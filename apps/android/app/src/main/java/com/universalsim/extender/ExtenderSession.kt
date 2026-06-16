@@ -14,6 +14,10 @@ class ExtenderSession private constructor(private var handle: Long) {
     interface FrameSink {
         fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray)
         fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long)
+        /** A still JPEG slide preview (clicker mode); default no-op for video sinks. */
+        fun onSnapshot(width: Int, height: Int, jpeg: ByteArray) {}
+        /** The host's identity (OS tag + machine name); default no-op. */
+        fun onHostInfo(os: String, name: String) {}
         fun onEnded()
     }
 
@@ -50,6 +54,17 @@ class ExtenderSession private constructor(private var handle: Long) {
                         ExtenderNative.nativeEventKeyframe(handle),
                         ExtenderNative.nativeEventPts(handle),
                     )
+                    2 -> sink.onSnapshot(
+                        ExtenderNative.nativeEventWidth(handle),
+                        ExtenderNative.nativeEventHeight(handle),
+                        ExtenderNative.nativeEventData(handle) ?: ByteArray(0),
+                    )
+                    3 -> {
+                        // HostInfo payload is UTF-8 "os\nname".
+                        val parts = String(ExtenderNative.nativeEventData(handle) ?: ByteArray(0))
+                            .split("\n", limit = 2)
+                        sink.onHostInfo(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
+                    }
                     else -> {
                         pumping = false
                         sink.onEnded()

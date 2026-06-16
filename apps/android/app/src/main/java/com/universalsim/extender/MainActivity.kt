@@ -1,34 +1,48 @@
 package com.universalsim.extender
 
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.concurrent.thread
 
@@ -48,14 +62,17 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppRoot() {
+    val context = LocalContext.current
     var session by remember { mutableStateOf<ExtenderSession?>(null) }
     var mode by remember { mutableStateOf(Mode.CLICKER) }
+    var currentAddr by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
 
     val live = session
     if (live == null) {
         ConnectScreen(status) { addr, chosenMode ->
             mode = chosenMode
+            currentAddr = addr
             status = "connecting…"
             // Clicker needs no video (control-only); the others mirror the screen.
             val capture = if (chosenMode == Mode.CLICKER) {
@@ -68,6 +85,9 @@ fun AppRoot() {
                 // own native size, so exact values here are not critical.
                 val s = ExtenderSession.connect(addr, 1920, 1080, capture)
                 runOnUi {
+                    // Remember a successful host for quick reconnect; its OS/name
+                    // fill in once HostInfo arrives (see the screen sinks below).
+                    if (s != null) ConnectionStore.remember(context, addr, chosenMode.name)
                     session = s
                     status = if (s == null) "connection failed" else ""
                 }
@@ -83,9 +103,9 @@ fun AppRoot() {
                 }) { Text("Disconnect") }
             }
             when (mode) {
-                Mode.CLICKER -> ClickerScreen(live)
-                Mode.VIEWER -> StreamScreen(live, forwardInput = false)
-                Mode.FULL_CONTROL -> StreamScreen(live, forwardInput = true)
+                Mode.CLICKER -> ClickerScreen(live, currentAddr)
+                Mode.VIEWER -> StreamScreen(live, currentAddr, forwardInput = false)
+                Mode.FULL_CONTROL -> StreamScreen(live, currentAddr, forwardInput = true)
             }
         }
     }
@@ -93,20 +113,48 @@ fun AppRoot() {
 
 @Composable
 fun ConnectScreen(status: String, onConnect: (addr: String, mode: Mode) -> Unit) {
-    var addr by remember { mutableStateOf("192.168.1.42:9000") }
+    val context = LocalContext.current
+    var addr by remember { mutableStateOf("127.0.0.1:9000") }
+    var saved by remember { mutableStateOf(ConnectionStore.load(context)) }
+    var showHidden by remember { mutableStateOf(false) }
+    fun reload() { saved = ConnectionStore.load(context) }
+
+    val visible = saved.filter { showHidden || !it.hidden }.sortedByDescending { it.lastConnected }
+    val hasHidden = saved.any { it.hidden }
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("ExtenderScreen", style = MaterialTheme.typography.headlineMedium)
+
+        if (visible.isNotEmpty()) {
+            Text("Saved hosts", style = MaterialTheme.typography.titleMedium)
+            visible.forEach { c ->
+                SavedConnectionRow(
+                    conn = c,
+                    onConnect = {
+                        onConnect(c.addr, runCatching { Mode.valueOf(c.mode) }.getOrDefault(Mode.CLICKER))
+                    },
+                    onToggleHide = { ConnectionStore.setHidden(context, c.addr, !c.hidden); reload() },
+                    onDelete = { ConnectionStore.delete(context, c.addr); reload() },
+                )
+            }
+        }
+        if (hasHidden) {
+            TextButton(onClick = { showHidden = !showHidden }) {
+                Text(if (showHidden) "Hide hidden" else "Show hidden")
+            }
+        }
+
+        Text("New connection", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = addr,
             onValueChange = { addr = it },
-            label = { Text("Mac host  (ip:9000)") },
+            label = { Text("Host  (ip:port)") },
             modifier = Modifier.fillMaxWidth(),
         )
-        Text("Connect as:", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { onConnect(addr, Mode.CLICKER) }) { Text("Clicker") }
             Button(onClick = { onConnect(addr, Mode.VIEWER) }) { Text("Viewer") }
@@ -116,14 +164,75 @@ fun ConnectScreen(status: String, onConnect: (addr: String, mode: Mode) -> Unit)
     }
 }
 
-/** Presentation remote: each button taps a key on the host. */
+/** One saved host: tap to quick-connect (in its remembered mode); hide or delete. */
 @Composable
-fun ClickerScreen(session: ExtenderSession) {
+private fun SavedConnectionRow(
+    conn: SavedConnection,
+    onConnect: () -> Unit,
+    onToggleHide: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(onClick = onConnect, modifier = Modifier.weight(1f)) {
+            Text(deviceEmoji(conn.os), fontSize = 22.sp)
+            Spacer(Modifier.width(10.dp))
+            Column(horizontalAlignment = Alignment.Start) {
+                Text(conn.hostname.ifEmpty { conn.addr })
+                Text(
+                    "${conn.addr}  ·  ${modeLabel(conn.mode)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        TextButton(onClick = onToggleHide) { Text(if (conn.hidden) "Unhide" else "Hide") }
+        TextButton(onClick = onDelete) { Text("Delete") }
+    }
+}
+
+/**
+ * Presentation remote: each button taps a key on the host. A control-only host
+ * (the Windows clicker host) also pushes a still JPEG preview of the current
+ * slide after each tap, shown at the top.
+ */
+@Composable
+fun ClickerScreen(session: ExtenderSession, addr: String) {
+    val context = LocalContext.current
+    var preview by remember { mutableStateOf<ImageBitmap?>(null) }
+    DisposableEffect(session) {
+        session.startPump(object : ExtenderSession.FrameSink {
+            override fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray) {}
+            override fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long) {}
+            override fun onSnapshot(width: Int, height: Int, jpeg: ByteArray) {
+                val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
+                runOnUi { preview = bmp.asImageBitmap() }
+            }
+            override fun onHostInfo(os: String, name: String) {
+                ConnectionStore.setIdentity(context, addr, os, name)
+            }
+            override fun onEnded() {}
+        })
+        onDispose { }
+    }
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val slide = preview
+        if (slide != null) {
+            Image(
+                bitmap = slide,
+                contentDescription = "Current slide",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            )
+        } else {
+            Text("Waiting for slide preview…", style = MaterialTheme.typography.bodyMedium)
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             BigButton("◀  Prev") { session.tapKey(HidKeys.PAGE_UP) }
             BigButton("Next  ▶") { session.tapKey(HidKeys.PAGE_DOWN) }
@@ -158,7 +267,8 @@ private fun BigButton(label: String, onClick: () -> Unit) {
  * pointer input normalized to the view; in Viewer they're ignored.
  */
 @Composable
-fun StreamScreen(session: ExtenderSession, forwardInput: Boolean) {
+fun StreamScreen(session: ExtenderSession, addr: String, forwardInput: Boolean) {
+    val context = LocalContext.current
     var inputModifier = Modifier.fillMaxSize()
     if (forwardInput) {
         inputModifier = inputModifier.pointerInput(session) {
@@ -196,6 +306,10 @@ fun StreamScreen(session: ExtenderSession, forwardInput: Boolean) {
                             override fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long) {
                                 // Host streams at 60 fps; approximate a microsecond PTS.
                                 decoder?.decode(data, ptsValue * 16_666)
+                            }
+
+                            override fun onHostInfo(os: String, name: String) {
+                                ConnectionStore.setIdentity(context, addr, os, name)
                             }
 
                             override fun onEnded() {
