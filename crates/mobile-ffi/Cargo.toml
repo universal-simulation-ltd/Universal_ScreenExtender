@@ -1,0 +1,13 @@
+[package]
+name = "extender-mobile-ffi"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+# staticlib for iOS (link into the app), cdylib for Android (.so via the NDK),
+# rlib so `cargo test` can link the crate into its test harness.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+extender-core.workspace = true

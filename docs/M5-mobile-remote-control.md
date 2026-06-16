@@ -1,7 +1,7 @@
 # M5 — Mobile clients & "control my actual screen"
 
-**Status:** in progress — M5a ✅, M5b ✅, M5c ✅ (FFI bindings deferred), M5d–M5f
-pending. **Prereq:** M1 (streaming) ✅, M2 (input) ✅, M3 (virtual display) ✅,
+**Status:** in progress — M5a ✅, M5b ✅, M5c ✅ (incl. C ABI), M5d–M5f pending.
+**Prereq:** M1 (streaming) ✅, M2 (input) ✅, M3 (virtual display) ✅,
 M4 (configurable resolution) ✅.
 
 ## Goal
@@ -100,9 +100,16 @@ What does *not* carry over for free:
   desktop client is refactored onto it (`run_network` → `Session` + a local
   `openh264` decode loop), so the networking lives in one place. A loopback
   integration test drives connect → receive StreamStart + N frames → send input
-  over a real socket. **FFI surface deferred:** the C/UniFFI bindings are a thin
-  layer best designed against the actual iOS/Android consumers (M5d/M5e), so the
-  Rust API is kept FFI-friendly (simple owned types, channels) but not yet bound.
+  over a real socket. **C ABI added** in `crates/mobile-ffi`
+  (`extender-mobile-ffi`, staticlib + cdylib): `extender_session_connect` /
+  `_next_event` / `_free`, opaque event accessors, and `extender_send_*` for
+  mouse/touch/scroll/secondary-click/pinch/text — every byte buffer handed out is
+  **Annex-B** so the platform decoder (VideoToolbox / MediaCodec) can take it
+  directly. A hand-written header lives at `crates/mobile-ffi/include/extender_ffi.h`,
+  and a Rust test drives the whole ABI against a loopback host. (This also
+  surfaced and fixed a `Session::drop` deadlock — it no longer joins the parked
+  writer thread; it shuts the socket to unblock the reader and lets both detached
+  threads exit on their own.)
 
 - **M5d — iOS app.** Thin SwiftUI/Metal shell over the M5c core: `VTDecompression`
   (VideoToolbox) hardware H.264 decode, `MTKView` render, gesture recognizers →
@@ -248,8 +255,9 @@ event via `CGEventKeyboardSetUnicodeString`).
   `ClientHello`, round-trip tests (M5a).
 - `crates/host/src/main.rs` — capture-mode branch in `serve()`/`main()`; primary
   display selection; `Input::Text` injection (M5b).
-- `crates/core/src/lib.rs` — ✅ `Session` + `StreamEvent` (shared networking,
-  M5c); FFI bindings still to come.
+- `crates/core/src/lib.rs` — ✅ `Session` + `StreamEvent` (shared networking, M5c).
+- `crates/mobile-ffi/` — ✅ C ABI over `Session` (`src/lib.rs`) + header
+  (`include/extender_ffi.h`); the surface the iOS/Android shells link against.
 - `apps/ios/`, `apps/android/` (new) — native shells over the core (M5d/M5e).
 - `crates/client/src/main.rs` — add a `--mirror` flag to exercise M5b from the
   desktop before the mobile apps exist.

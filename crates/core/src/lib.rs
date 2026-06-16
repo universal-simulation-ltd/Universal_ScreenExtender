@@ -10,9 +10,9 @@
 //! it with the platform decoder and a touch UI (see `docs/M5-mobile-remote-control.md`).
 
 use std::io::{self, BufReader};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::sync::mpsc::{self, Receiver};
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 pub use extender_protocol::{self as protocol, ClientHello, Codec, Input, Message};
 
@@ -51,16 +51,17 @@ impl From<Message> for StreamEvent {
     }
 }
 
-/// A live client session. Connecting spawns two background threads — one reading
-/// the downstream stream into the [`events`](Session::events) channel, one
-/// draining the caller's input channel onto the socket — so the caller only
-/// polls events and pushes input. Both threads exit when the host disconnects or
-/// the channels close; dropping the `Session` drops the events receiver, which is
-/// how a consumer signals it's done.
+/// A live client session. Connecting spawns two detached background threads — one
+/// reading the downstream stream into the [`events`](Session::events) channel,
+/// one draining the caller's input channel onto the socket — so the caller only
+/// polls events and pushes input. The reader exits on host disconnect (or when
+/// the session is dropped, which shuts the socket down); the writer exits when
+/// the caller drops its input `Sender`.
 pub struct Session {
     events: Receiver<StreamEvent>,
-    reader: Option<JoinHandle<()>>,
-    writer: Option<JoinHandle<()>>,
+    /// A spare handle on the socket, used only to force the reader's blocking
+    /// read to return when the session is dropped.
+    shutdown: TcpStream,
 }
 
 impl Session {
@@ -83,12 +84,14 @@ impl Session {
         // error from `connect` rather than dying silently in a background thread.
         protocol::write_framed(&mut stream, hello)?;
 
-        // A second handle on the same socket carries input upstream.
+        // A second handle on the same socket carries input upstream; a third lets
+        // `Drop` unblock the reader.
         let input_stream = stream.try_clone()?;
-        let writer = thread::spawn(move || write_input(input_stream, input_rx));
+        let shutdown = stream.try_clone()?;
+        thread::spawn(move || write_input(input_stream, input_rx));
 
         let (event_tx, events) = mpsc::channel();
-        let reader = thread::spawn(move || {
+        thread::spawn(move || {
             let mut reader = BufReader::new(stream);
             // Stop on EOF, a decode/socket error, or once the consumer has dropped
             // the events receiver (`send` then fails).
@@ -99,11 +102,7 @@ impl Session {
             }
         });
 
-        Ok(Session {
-            events,
-            reader: Some(reader),
-            writer: Some(writer),
-        })
+        Ok(Session { events, shutdown })
     }
 
     /// Block until the next stream event, returning `None` once the stream ends
@@ -123,15 +122,12 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // The reader observes the dropped events receiver (or host EOF) and exits;
-        // the writer exits when the caller drops its input Sender. Join so threads
-        // don't outlive the session.
-        if let Some(h) = self.reader.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.writer.take() {
-            let _ = h.join();
-        }
+        // Shut the socket so the reader's blocking read returns and it exits
+        // promptly (it would otherwise park until the host sent something). The
+        // writer exits when the caller drops its input `Sender`. Both threads are
+        // detached and own their state — we deliberately don't join, since the
+        // writer can be parked on `recv()` and joining it here would deadlock.
+        let _ = self.shutdown.shutdown(Shutdown::Both);
     }
 }
 
