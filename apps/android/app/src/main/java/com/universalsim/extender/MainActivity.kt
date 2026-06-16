@@ -131,7 +131,12 @@ fun ClickerScreen(session: ExtenderSession) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             Button(onClick = { session.tapKey(HidKeys.HOME) }) { Text("First") }
             Button(onClick = { session.tapKey(HidKeys.END) }) { Text("Last") }
-            Button(onClick = { session.tapKey(HidKeys.PERIOD) }) { Text("Blank") }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            // No universal "blank" key: PowerPoint uses B (black), Keynote / Google
+            // Slides use '.' — so expose both (see docs/M6-presentation-clicker.md).
+            Button(onClick = { session.tapKey(HidKeys.B) }) { Text("Blank (PPT)") }
+            Button(onClick = { session.tapKey(HidKeys.PERIOD) }) { Text("Blank (.)") }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             Button(onClick = { session.tapKey(HidKeys.F5) }) { Text("Start (F5)") }
