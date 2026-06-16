@@ -50,6 +50,10 @@ pub enum StreamEvent {
         os: String,
         name: String,
     },
+    /// The host's open top-level windows as `(id, title)`, for the focus picker.
+    WindowList {
+        windows: Vec<(i64, String)>,
+    },
 }
 
 impl From<Message> for StreamEvent {
@@ -65,6 +69,7 @@ impl From<Message> for StreamEvent {
                 StreamEvent::Snapshot { width, height, slot, data }
             }
             Message::HostInfo { os, name } => StreamEvent::HostInfo { os, name },
+            Message::WindowList { windows } => StreamEvent::WindowList { windows },
         }
     }
 }

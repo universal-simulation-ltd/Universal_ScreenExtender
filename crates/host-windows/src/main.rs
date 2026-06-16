@@ -7,6 +7,7 @@
 //! Windows-only (uses Win32 `SendInput`); will not compile on other platforms.
 
 mod snapshot;
+mod winlist;
 
 use std::io;
 use std::mem::size_of;
@@ -38,6 +39,8 @@ const SNAPSHOT_DELAY: Duration = Duration::from_millis(350);
 /// Pre-scan: per-page settle time, and a safety cap on the page count.
 const SCAN_PAGE_DELAY: Duration = Duration::from_millis(250);
 const SCAN_MAX_PAGES: u32 = 500;
+/// Wait after raising a window before sending F5, so it's foreground first.
+const FOCUS_SETTLE: Duration = Duration::from_millis(250);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::args()
@@ -107,13 +110,17 @@ fn read_hello(stream: &mut TcpStream, peer: &str) -> Option<()> {
     Some(())
 }
 
-/// A request to the snapshot thread.
+/// A request to the snapshot thread (which owns the downstream writer).
 enum SnapReq {
     /// A slide-changing key was injected (HID usage id); refresh the preview and
     /// advance the tracked page index accordingly.
     Key(u32),
     /// Pre-scan the open document into the slide cache for next-slide look-ahead.
     Scan,
+    /// (Re)send the list of open windows.
+    ListWindows,
+    /// Bring the window with this handle to the foreground.
+    FocusWindow(i64),
 }
 
 /// Read input events from the client and inject them into the local desktop until
@@ -133,11 +140,21 @@ fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut input = stream;
     while let Ok(event) = protocol::read_framed::<_, Input>(&mut input) {
-        // ScanDeck is a control request, not an input event — hand it to the
-        // snapshot thread instead of injecting it.
-        if matches!(event, Input::ScanDeck) {
-            let _ = snap_tx.send(SnapReq::Scan);
-            continue;
+        // Control requests are handled by the snapshot thread, not injected.
+        match event {
+            Input::ScanDeck => {
+                let _ = snap_tx.send(SnapReq::Scan);
+                continue;
+            }
+            Input::ListWindows => {
+                let _ = snap_tx.send(SnapReq::ListWindows);
+                continue;
+            }
+            Input::FocusWindow { id } => {
+                let _ = snap_tx.send(SnapReq::FocusWindow(id));
+                continue;
+            }
+            _ => {}
         }
         // A key press or committed text can change the slide; refresh the preview
         // after injecting it (Text reports code 0 = no page-index change).
@@ -169,29 +186,69 @@ fn snapshot_loop(mut writer: TcpStream, rx: &Receiver<SnapReq>) {
     if send_previews(&mut writer, &cache, idx).is_err() {
         return; // client already gone
     }
+    if send_window_list(&mut writer).is_err() {
+        return;
+    }
     loop {
         let Ok(first) = rx.recv() else { return };
-        let mut scan = matches!(first, SnapReq::Scan);
-        if let SnapReq::Key(code) = first {
-            apply_index(&mut idx, code, cache.len());
+        let mut scan = false;
+        let mut refresh = false;
+        if handle_req(&mut writer, &cache, &mut idx, &mut scan, &mut refresh, first).is_err() {
+            return;
         }
-        // Let the slide redraw, coalescing a burst of taps into one refresh.
+        // Let the slide redraw / window come forward, coalescing a burst.
         thread::sleep(SNAPSHOT_DELAY);
         while let Ok(req) = rx.try_recv() {
-            match req {
-                SnapReq::Scan => scan = true,
-                SnapReq::Key(code) => apply_index(&mut idx, code, cache.len()),
+            if handle_req(&mut writer, &cache, &mut idx, &mut scan, &mut refresh, req).is_err() {
+                return;
             }
         }
         let result = if scan {
             scan_deck(&mut writer, &mut cache, &mut idx)
-        } else {
+        } else if refresh {
             send_previews(&mut writer, &cache, idx)
+        } else {
+            Ok(())
         };
         if result.is_err() {
             return;
         }
     }
+}
+
+/// Apply one snapshot-thread request: window list/focus act immediately, while
+/// Key/Scan set flags so the loop coalesces a burst into a single capture.
+fn handle_req(
+    writer: &mut TcpStream,
+    cache: &[(u32, u32, Vec<u8>)],
+    idx: &mut i32,
+    scan: &mut bool,
+    refresh: &mut bool,
+    req: SnapReq,
+) -> io::Result<()> {
+    match req {
+        SnapReq::Scan => *scan = true,
+        SnapReq::Key(code) => {
+            apply_index(idx, code, cache.len());
+            *refresh = true;
+        }
+        SnapReq::ListWindows => send_window_list(writer)?,
+        SnapReq::FocusWindow(id) => {
+            winlist::focus_window(id);
+            // Once it's foreground, try to start its slideshow / presenter mode.
+            thread::sleep(FOCUS_SETTLE);
+            tap_vk(VK_F5);
+            *refresh = true; // the newly-focused window becomes the next preview
+        }
+    }
+    Ok(())
+}
+
+/// Send the host's open windows so the client can offer a focus picker.
+fn send_window_list(writer: &mut TcpStream) -> io::Result<()> {
+    let windows = winlist::list_windows();
+    println!("sent window list ({} windows)", windows.len());
+    protocol::write_framed(writer, &Message::WindowList { windows })
 }
 
 /// Update the tracked page index from an injected key (HID usage), clamping to the
@@ -324,8 +381,8 @@ fn inject(input: Input) {
         | Input::MouseMoveRelative { .. }
         | Input::Touch { .. }
         | Input::Gesture(_) => {}
-        // Handled in serve() (it's a control request, not an injectable event).
-        Input::ScanDeck => {}
+        // Handled in serve() (control requests, not injectable events).
+        Input::ScanDeck | Input::ListWindows | Input::FocusWindow { .. } => {}
     }
 }
 

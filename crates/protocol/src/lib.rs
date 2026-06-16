@@ -13,9 +13,12 @@ use serde::{Deserialize, Serialize};
 /// touch/gesture/text variants. Bumped in M6: v3 added [`Message::Snapshot`] (a
 /// still-image preview an input-only host pushes to a clicker), v4 added
 /// [`Message::HostInfo`] (the host's OS + name, for labelling saved connections).
-/// v5 added [`Input::ScanDeck`] and a `next` flag on [`Message::Snapshot`], for
-/// the clicker's next-slide look-ahead. The host warns (but proceeds) on a skew.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// v5 added [`Input::ScanDeck`] and a `slot` on [`Message::Snapshot`], for the
+/// clicker's next-slide look-ahead. v6 added [`Message::WindowList`] plus
+/// [`Input::ListWindows`] / [`Input::FocusWindow`], so a clicker can refocus the
+/// host window that should receive its keys. The host warns (but proceeds) on a
+/// version skew.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Video codec used for the encoded frame stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +89,13 @@ pub enum Message {
         os: String,
         name: String,
     },
+    /// The host's open top-level windows as `(id, title)` pairs, so a clicker can
+    /// pick one to bring to the foreground (its keystrokes go to whatever's
+    /// focused). `id` is an opaque host handle echoed back in [`Input::FocusWindow`].
+    /// Sent on connect and on [`Input::ListWindows`].
+    WindowList {
+        windows: Vec<(i64, String)>,
+    },
 }
 
 /// The first message a client sends upstream, immediately after connecting and
@@ -143,6 +153,11 @@ pub enum Input {
     /// returns to the start, capturing each page. A host that doesn't support
     /// look-ahead ignores it. Appended last to keep existing discriminants stable.
     ScanDeck,
+    /// Ask the host to (re)send its [`Message::WindowList`].
+    ListWindows,
+    /// Bring the host window with this id (from [`Message::WindowList`]) to the
+    /// foreground, so subsequent keystrokes land in it.
+    FocusWindow { id: i64 },
 }
 
 /// The lifecycle phase of a touch contact (mirrors the common touch APIs).
@@ -302,6 +317,9 @@ mod tests {
                 os: "windows".to_string(),
                 name: "DESKTOP-ABC123".to_string(),
             },
+            Message::WindowList {
+                windows: vec![(12345, "slides.pdf — Edge".to_string()), (67890, "Notes".to_string())],
+            },
         ];
 
         let mut buf = Vec::new();
@@ -332,6 +350,8 @@ mod tests {
             Input::Gesture(Gesture::SecondaryClick { x: 0.4, y: 0.9 }),
             Input::Text { text: "héllo, 世界 🌍".to_string() },
             Input::ScanDeck,
+            Input::ListWindows,
+            Input::FocusWindow { id: 1234567890 },
         ];
 
         let mut buf = Vec::new();

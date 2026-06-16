@@ -113,8 +113,9 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeFree(
 // ---- downstream events ---------------------------------------------------
 
 /// Advance to the next event, storing it on the handle; returns its kind
-/// (0 = Start, 1 = Frame, 2 = Snapshot, 3 = HostInfo) or -1 once the stream ends.
-/// Call from one thread. For HostInfo the bytes are UTF-8 "os\nname".
+/// (0 = Start, 1 = Frame, 2 = Snapshot, 3 = HostInfo, 4 = WindowList) or -1 once
+/// the stream ends. Call from one thread. For HostInfo the bytes are UTF-8
+/// "os\nname"; for WindowList they are one "id\ttitle" line per window.
 #[no_mangle]
 pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeNextEvent(
     _env: JNIEnv,
@@ -162,6 +163,14 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeNextE
             s.kind = 3;
             s.data = format!("{os}\n{name}").into_bytes();
             3
+        }
+        Some(StreamEvent::WindowList { windows }) => {
+            // Pack as one "id\ttitle" line per window for the Kotlin side to parse.
+            s.kind = 4;
+            let lines: Vec<String> =
+                windows.iter().map(|(id, title)| format!("{id}\t{title}")).collect();
+            s.data = lines.join("\n").into_bytes();
+            4
         }
         None => {
             s.kind = -1;
@@ -325,6 +334,27 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeScanD
     handle: jlong,
 ) {
     send_input(handle, Input::ScanDeck);
+}
+
+/// Ask the host to (re)send its list of open windows.
+#[no_mangle]
+pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeListWindows(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    send_input(handle, Input::ListWindows);
+}
+
+/// Bring the host window with `id` (from a WindowList event) to the foreground.
+#[no_mangle]
+pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeFocusWindow(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: jlong,
+) {
+    send_input(handle, Input::FocusWindow { id });
 }
 
 #[no_mangle]
