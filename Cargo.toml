@@ -5,6 +5,7 @@ members = [
     "crates/core",
     "crates/host",
     "crates/client",
+    "crates/mobile-ffi",
 ]
 
 [workspace.package]

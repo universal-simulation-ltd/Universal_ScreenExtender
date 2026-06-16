@@ -503,6 +503,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "extender-mobile-ffi"
+version = "0.1.0"
+dependencies = [
+ "extender-core",
+]
+
+[[package]]
 name = "extender-protocol"
 version = "0.1.0"
 dependencies = [
