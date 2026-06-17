@@ -81,6 +81,19 @@ adb reverse tcp:9000 tcp:9000   # then connect the app to 127.0.0.1:9000
 - **Window picker** — **Focus window ▾** lists the host's open windows; pick one
   to bring it to the foreground (and start its slideshow).
 
+## Security
+
+The Windows host window shows a **4-digit pairing PIN** and embeds it in its QR.
+A client must present the PIN to connect — scanning the QR pairs automatically;
+a manual `ip:port` connection must type the PIN. This stops *someone who merely
+knows the host's IP* from connecting and injecting input.
+
+It is **not** end-to-end encryption: the connection is plaintext, so a party who
+can sniff the same network could still read the PIN and the keystrokes. For a
+clicker on a trusted network the PIN is a proportionate guard; treat the link as
+you would any unencrypted LAN service. (The headless CLI host has no PIN — it's
+meant for local USB/`adb reverse` use.)
+
 ## Layout
 
 ```
