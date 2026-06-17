@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 /// clicker's next-slide look-ahead. v6 added [`Message::WindowList`] plus
 /// [`Input::ListWindows`] / [`Input::FocusWindow`], so a clicker can refocus the
 /// host window that should receive its keys. The host warns (but proceeds) on a
-/// version skew. v7 added a `start_show` flag to [`Input::FocusWindow`].
-pub const PROTOCOL_VERSION: u32 = 7;
+/// version skew. v7 added a `start_show` flag to [`Input::FocusWindow`]. v8 added
+/// a `platform` field to [`ClientHello`] so a host can show the device type.
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Video codec used for the encoded frame stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +114,8 @@ pub struct ClientHello {
     pub width: u32,
     pub height: u32,
     pub capture_mode: CaptureMode,
+    /// The client's OS, so a host can label the connection by device type (v8).
+    pub platform: ClientPlatform,
 }
 
 /// A client -> host input event. Pointer coordinates are normalized to the
@@ -185,6 +188,34 @@ pub enum Button {
     Left,
     Right,
     Middle,
+}
+
+/// The client's operating system, carried in [`ClientHello`] so a host can show
+/// which kind of device connected. Added to the hello in protocol v8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ClientPlatform {
+    #[default]
+    Unknown,
+    Windows,
+    Macos,
+    Linux,
+    Android,
+    Ios,
+}
+
+impl ClientPlatform {
+    /// The platform this client was built for, from `std::env::consts::OS`.
+    #[must_use]
+    pub fn current() -> Self {
+        match std::env::consts::OS {
+            "windows" => Self::Windows,
+            "macos" => Self::Macos,
+            "linux" => Self::Linux,
+            "android" => Self::Android,
+            "ios" => Self::Ios,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// Write a length-prefixed, postcard-encoded value to a stream. Used for every
@@ -379,6 +410,7 @@ mod tests {
                 width: 2560,
                 height: 1440,
                 capture_mode: mode,
+                platform: ClientPlatform::Android,
             };
             let mut buf = Vec::new();
             write_framed(&mut buf, &hello).unwrap();

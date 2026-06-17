@@ -80,6 +80,7 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeConne
             2 => CaptureMode::ControlOnly,
             _ => CaptureMode::VirtualDisplay,
         },
+        platform: protocol::ClientPlatform::current(),
     };
     let (input_tx, input_rx) = mpsc::channel();
     match Session::connect(&addr, &hello, input_rx) {

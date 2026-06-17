@@ -221,6 +221,7 @@ mod tests {
             width: 1920,
             height: 1080,
             capture_mode: protocol::CaptureMode::default(),
+            platform: protocol::ClientPlatform::current(),
         };
         let session = Session::connect(&addr.to_string(), &hello, input_rx).unwrap();
 

@@ -575,6 +575,7 @@ impl ApplicationHandler for App {
                 width,
                 height,
                 capture_mode: self.capture_mode,
+                platform: protocol::ClientPlatform::current(),
             };
             let addr = self.addr.clone();
             let shared = self.shared.clone();
