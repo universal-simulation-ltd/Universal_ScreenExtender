@@ -214,6 +214,10 @@ impl HostApp {
 
         let ip = best_lan_ip().unwrap_or_else(|| "127.0.0.1".to_owned());
         self.address = Some(format!("{ip}:{port}"));
+        // Re-read the network so the address/QR/Wi-Fi details reflect the current
+        // connection (e.g. after switching to a phone hotspot and restarting).
+        self.wifi = crate::wifi::current_wifi();
+        self.wifi_qr = None;
         self.combined_qr = None;
         self.firewall_ok = Some(crate::firewall::rule_present(port));
         self.running = true;
@@ -437,8 +441,10 @@ impl HostApp {
             // Actions: host controls (moved out of the old "More options").
             ui.menu_button("Actions", |ui| {
                 if self.running {
-                    if ui.button("⏹  Stop hosting").clicked() {
-                        self.stop();
+                    // Restart re-reads the network (new Wi-Fi / IP) and rebinds in
+                    // one click — start() stops first. (Closing the window stops it.)
+                    if ui.button("🔄  Restart host").clicked() {
+                        self.start(ctx);
                         ui.close_menu();
                     }
                 } else if ui.button("▶  Start hosting").clicked() {
