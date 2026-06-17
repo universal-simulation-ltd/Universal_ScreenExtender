@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -251,9 +252,12 @@ fun ConnectScreen(
     ) {
         Text("Universal Screens", style = MaterialTheme.typography.headlineMedium)
 
-        // A big camera glyph above the primary action, so scanning reads as THE
-        // thing to do.
-        Text("📷", fontSize = 72.sp)
+        // The app icon above the primary action — tapping it also opens the scanner.
+        Image(
+            painter = painterResource(R.drawable.app_icon),
+            contentDescription = "Scan to connect",
+            modifier = Modifier.size(140.dp).clickable(onClick = startScan),
+        )
         Button(onClick = startScan, modifier = Modifier.fillMaxWidth()) {
             Text("Scan to connect", style = MaterialTheme.typography.titleMedium)
         }

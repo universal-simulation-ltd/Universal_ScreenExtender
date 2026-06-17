@@ -24,6 +24,10 @@ SLATE500 = (71, 85, 105, 255)
 SLATE400 = (100, 116, 139, 255)
 SCREEN   = (11, 18, 32, 255)
 ORANGE   = (224, 85, 4, 255)   # #e05504
+# Phone "text" lines on the orange screen — a darker orange-brown chosen to sit on
+# ORANGE with roughly the same contrast the laptop's slate lines have on its dark
+# screen (~2.7:1), so both screens read as content at a matching strength.
+PHONE_LN = (116, 44, 4, 255)
 # Light slates for the laptop, so it reads clearly against the dark background.
 LAPTOP   = (203, 213, 225, 255)  # slate-300 — screen bezel
 DECK     = (148, 163, 184, 255)  # slate-400 — keyboard deck (a touch darker for depth)
@@ -67,6 +71,10 @@ rr([116, 148, 140, 154], 2, SLATE600)     # trackpad notch
 rr([100, 112, 156, 216], 20, SLATE900)    # gap ring
 rr([104, 116, 152, 212], 14, SLATE800)    # body
 rr([110, 124, 146, 202], 9, ORANGE)       # orange screen
+# "Text" dash lines on the screen, mirroring the laptop's.
+rr([116, 133, 140, 139], 3, PHONE_LN)
+rr([116, 146, 135, 152], 3, PHONE_LN)
+rr([116, 159, 129, 165], 3, PHONE_LN)
 el([126, 118, 130, 122], SLATE500)        # camera dot
 rr([120, 205, 136, 208], 1, SLATE600)     # home indicator
 
