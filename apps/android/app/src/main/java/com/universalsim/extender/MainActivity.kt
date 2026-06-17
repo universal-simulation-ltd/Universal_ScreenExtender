@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +49,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlin.concurrent.thread
 
 /** The three ways to use the app; they differ only in UI + whether they stream. */
@@ -123,6 +126,11 @@ fun ConnectScreen(status: String, onConnect: (addr: String, mode: Mode) -> Unit)
     var showHidden by remember { mutableStateOf(false) }
     fun reload() { saved = ConnectionStore.load(context) }
 
+    // Scan the host's QR code (from the Windows host window) to fill the address.
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let { addr = it }
+    }
+
     val visible = saved.filter { showHidden || !it.hidden }.sortedByDescending { it.lastConnected }
     val hasHidden = saved.any { it.hidden }
 
@@ -157,6 +165,16 @@ fun ConnectScreen(status: String, onConnect: (addr: String, mode: Mode) -> Unit)
             value = addr,
             onValueChange = { addr = it },
             label = { Text("Host  (ip:port)") },
+            trailingIcon = {
+                TextButton(onClick = {
+                    val options = ScanOptions()
+                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setPrompt("Scan the host QR")
+                        .setBeepEnabled(false)
+                        .setOrientationLocked(false)
+                    scanLauncher.launch(options)
+                }) { Text("Scan QR") }
+            },
             modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

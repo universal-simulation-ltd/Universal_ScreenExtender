@@ -35,4 +35,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    // QR scanning of the host's connection code.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
