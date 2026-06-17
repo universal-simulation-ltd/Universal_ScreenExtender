@@ -11,7 +11,12 @@ use std::thread;
 
 use eframe::egui;
 use extender_protocol::ClientPlatform;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
+use windows::Win32::Foundation::{COLORREF, HWND};
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+};
 
 use crate::{serve_loop, HostEvent};
 
@@ -63,6 +68,10 @@ struct HostApp {
     dark_mode: Option<bool>,
     /// 4-digit pairing code a client must present to connect (persisted).
     pin: u32,
+    /// Reveal the "This PC: …" detail (toggled by clicking the OS icon).
+    show_pc_info: bool,
+    /// Last theme we painted the title bar for (re-applied on change).
+    caption_dark: Option<bool>,
     port: String,
     running: bool,
     stop: Arc<AtomicBool>,
@@ -84,6 +93,8 @@ impl HostApp {
         }
         Self {
             pin,
+            show_pc_info: false,
+            caption_dark: None,
             auto_connect: storage
                 .and_then(|s| eframe::get_value(s, "auto_connect"))
                 .unwrap_or(true),
@@ -182,7 +193,7 @@ impl eframe::App for HostApp {
         false
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Follow the OS theme by default; honour the user's override if set.
         ctx.set_theme(match self.dark_mode {
             Some(true) => egui::ThemePreference::Dark,
@@ -190,22 +201,34 @@ impl eframe::App for HostApp {
             None => egui::ThemePreference::System,
         });
 
-        // The UNI·SIM brand strip — a thin gradient "light bar" across the top.
-        // Fill it with the theme background so it tracks light/dark mode.
-        let strip_bg = ctx.style().visuals.panel_fill;
-        egui::TopBottomPanel::top("brand_strip")
-            .exact_height(5.0)
-            .frame(egui::Frame::none().fill(strip_bg))
-            .show_separator_line(false)
-            .show(ctx, |ui| paint_brand_strip(ui));
+        // Colour the title bar to match the app (not the OS), when the theme changes.
+        let dark = ctx.style().visuals.dark_mode;
+        if self.caption_dark != Some(dark) {
+            self.caption_dark = Some(dark);
+            if let Some(hwnd) = window_hwnd(frame) {
+                set_title_bar(hwnd, ctx.style().visuals.panel_fill, dark);
+            }
+        }
+
+        // The UNI·SIM brand strip ("light bar") is painted on a foreground layer
+        // across the very top (see paint_brand_strip) — no panel, so no seam line.
+        paint_brand_strip(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // This PC's identity.
-            ui.horizontal(|ui| {
-                device_icon(ui, DeviceKind::Laptop, 22.0);
-                ui.label(format!("This PC: Windows · {}", host_name()));
+            ui.add_space(4.0); // clear the brand strip
+            // This PC: a centred OS icon; click it to reveal the machine name.
+            ui.vertical_centered(|ui| {
+                let resp = device_icon(ui, DeviceKind::Laptop, 28.0)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Click to show this PC's name");
+                if resp.clicked() {
+                    self.show_pc_info = !self.show_pc_info;
+                }
+                if self.show_pc_info {
+                    ui.label(format!("This PC: Windows · {}", host_name()));
+                }
             });
-            ui.separator();
+            ui.add_space(6.0);
 
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
@@ -325,11 +348,15 @@ impl eframe::App for HostApp {
 
 /// Paint the UNI·SIM brand strip: a horizontal gradient (transparent → orange →
 /// transparent) with a gentle ~2.4s opacity pulse, matching the suite's
-/// `UniversalBar`. Edges fade out so it reads on any background.
-fn paint_brand_strip(ui: &mut egui::Ui) {
-    let rect = ui.max_rect();
+/// `UniversalBar`. Drawn on a foreground layer across the very top of the window
+/// (not a panel), so there's no panel seam/line beneath it. Edges fade out so it
+/// reads on any background.
+fn paint_brand_strip(ctx: &egui::Context) {
+    let screen = ctx.screen_rect();
+    let rect = egui::Rect::from_min_max(screen.min, egui::pos2(screen.max.x, screen.min.y + 5.0));
+
     // Subtle pulse between 0.35 and 1.0 opacity.
-    let t = ui.input(|i| i.time);
+    let t = ctx.input(|i| i.time);
     let pulse = 0.35 + 0.65 * (0.5 + 0.5 * (t * std::f64::consts::TAU / 2.4).sin());
     let alpha = (pulse * 255.0) as u8;
     let orange = egui::Color32::from_rgba_unmultiplied(BRAND.r(), BRAND.g(), BRAND.b(), alpha);
@@ -352,9 +379,45 @@ fn paint_brand_strip(ui: &mut egui::Ui) {
         v(xr, y1, clear),  // 5
     ]);
     mesh.indices.extend([0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5]);
-    ui.painter().add(egui::Shape::mesh(mesh));
 
-    ui.ctx().request_repaint(); // keep the pulse animating
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("brand_strip"),
+    ));
+    painter.add(egui::Shape::mesh(mesh));
+    ctx.request_repaint(); // keep the pulse animating
+}
+
+/// The Win32 `HWND` behind the eframe window, if available.
+fn window_hwnd(frame: &eframe::Frame) -> Option<HWND> {
+    match frame.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as *mut core::ffi::c_void)),
+        _ => None,
+    }
+}
+
+/// Recolour the window's title bar (DWM) to match the app theme: caption fill =
+/// the app background, with the light/dark variant for the system buttons/text.
+/// Best-effort (Windows 11); ignored on older Windows.
+fn set_title_bar(hwnd: HWND, bg: egui::Color32, dark: bool) {
+    let immersive: i32 = i32::from(dark);
+    let caption = COLORREF(
+        u32::from(bg.r()) | (u32::from(bg.g()) << 8) | (u32::from(bg.b()) << 16),
+    );
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            std::ptr::addr_of!(immersive).cast(),
+            std::mem::size_of::<i32>() as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            std::ptr::addr_of!(caption).cast(),
+            std::mem::size_of::<COLORREF>() as u32,
+        );
+    }
 }
 
 /// Mint a 4-digit pairing PIN (1000–9999) from the system clock. Not a crypto
@@ -432,9 +495,10 @@ impl DeviceKind {
     }
 }
 
-/// Draw a small monochrome device glyph inline in the current layout.
-fn device_icon(ui: &mut egui::Ui, kind: DeviceKind, size: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+/// Draw a small monochrome device glyph inline in the current layout. Returns the
+/// (clickable) response so callers can make it interactive.
+fn device_icon(ui: &mut egui::Ui, kind: DeviceKind, size: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
     let p = ui.painter();
     let color = egui::Color32::from_rgb(55, 55, 70);
     let stroke = egui::Stroke::new((size * 0.07).max(1.2), color);
@@ -484,4 +548,5 @@ fn device_icon(ui: &mut egui::Ui, kind: DeviceKind, size: f32) {
             p.rect_filled(r(0.38, 0.74, 0.24, 0.06), 1.0, color);
         }
     }
+    response
 }
