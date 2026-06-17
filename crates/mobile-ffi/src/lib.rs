@@ -38,6 +38,13 @@ pub enum ExtenderEventKind {
     Start = 0,
     /// One encoded frame: `pts_*`/`keyframe`/`data` valid; `data` = Annex-B NALs.
     Frame = 1,
+    /// Slide preview (clicker): `width`/`height`/`slot` valid; `data` = JPEG. `slot`
+    /// is 0 = current, -1 = previous, +1 = next (empty `data` = no slide there).
+    Snapshot = 2,
+    /// Host identity: `data` = UTF-8 `"os\nname"`.
+    HostInfo = 3,
+    /// Open windows: `data` = UTF-8, one `"id\ttitle"` line per window.
+    WindowList = 4,
 }
 
 /// Opaque downstream event returned by [`extender_session_next_event`]. Field
@@ -49,10 +56,13 @@ pub struct ExtenderEvent {
     height: u32,
     /// 0 = H.264, 1 = HEVC.
     codec: u32,
+    /// Slide-preview slot for a Snapshot event: 0 current, -1 previous, +1 next.
+    slot: i32,
     pts_value: i64,
     pts_timescale: i32,
     keyframe: bool,
-    /// Annex-B bytes, owned by this event.
+    /// Payload bytes, owned by this event (Annex-B for Start/Frame, JPEG for
+    /// Snapshot, UTF-8 text for HostInfo/WindowList).
     data: Vec<u8>,
 }
 
@@ -132,17 +142,9 @@ pub unsafe extern "C" fn extender_session_next_event(
     let Some(session) = (unsafe { session.as_ref() }) else {
         return ptr::null_mut();
     };
-    // Skip events this C ABI doesn't model yet (snapshot/host-info/window-list),
-    // so only Start/Frame surface; return null once the stream ends.
-    loop {
-        match session.session.next_event() {
-            Some(event) => {
-                if let Some(ffi) = ffi_event(event) {
-                    return Box::into_raw(Box::new(ffi));
-                }
-            }
-            None => return ptr::null_mut(),
-        }
+    match session.session.next_event() {
+        Some(event) => Box::into_raw(Box::new(ffi_event(event))),
+        None => ptr::null_mut(),
     }
 }
 
@@ -192,6 +194,15 @@ pub unsafe extern "C" fn extender_event_height(event: *const ExtenderEvent) -> u
 #[no_mangle]
 pub unsafe extern "C" fn extender_event_codec(event: *const ExtenderEvent) -> u32 {
     unsafe { &*event }.codec
+}
+
+/// Slide-preview slot of a Snapshot event: 0 = current, -1 = previous, +1 = next.
+///
+/// # Safety
+/// As [`extender_event_kind`].
+#[no_mangle]
+pub unsafe extern "C" fn extender_event_slot(event: *const ExtenderEvent) -> i32 {
+    unsafe { &*event }.slot
 }
 
 /// Whether a `Frame` event is a keyframe (prepend the parameter sets if so).
@@ -366,42 +377,99 @@ pub unsafe extern "C" fn extender_send_text(session: *mut ExtenderSession, text:
     }
 }
 
+/// Ask a clicker host to pre-scan the open document for next-slide look-ahead
+/// (the host pages through it once; Snapshot events with slots follow).
+///
+/// # Safety
+/// `session` must be a live session pointer.
+#[no_mangle]
+pub unsafe extern "C" fn extender_send_scan_deck(session: *mut ExtenderSession) {
+    send(session, Input::ScanDeck);
+}
+
+/// Ask the host to (re)send its open-window list (a WindowList event follows).
+///
+/// # Safety
+/// As [`extender_send_scan_deck`].
+#[no_mangle]
+pub unsafe extern "C" fn extender_send_list_windows(session: *mut ExtenderSession) {
+    send(session, Input::ListWindows);
+}
+
+/// Bring the host window with `id` (from a WindowList event) to the foreground;
+/// `start_show` also starts its slideshow (F5).
+///
+/// # Safety
+/// As [`extender_send_scan_deck`].
+#[no_mangle]
+pub unsafe extern "C" fn extender_send_focus_window(
+    session: *mut ExtenderSession,
+    id: i64,
+    start_show: bool,
+) {
+    send(session, Input::FocusWindow { id, start_show });
+}
+
 // ---- internals -----------------------------------------------------------
 
-/// Convert a core [`StreamEvent`] into the FFI event, normalizing every byte
-/// buffer to Annex-B so the consumer feeds it straight to a platform decoder.
-/// Returns `None` for events this C ABI doesn't expose yet (the snapshot preview,
-/// host identity, and window list added for the Android clicker — see the JNI
-/// bridge); the caller skips those.
-fn ffi_event(event: StreamEvent) -> Option<ExtenderEvent> {
+/// Convert a core [`StreamEvent`] into the FFI event. Start/Frame byte buffers are
+/// normalized to Annex-B; Snapshot carries JPEG with its `slot`; HostInfo and
+/// WindowList carry UTF-8 text (`"os\nname"` and `"id\ttitle"` lines).
+fn ffi_event(event: StreamEvent) -> ExtenderEvent {
+    let base = ExtenderEvent {
+        kind: ExtenderEventKind::Start,
+        width: 0,
+        height: 0,
+        codec: 0,
+        slot: 0,
+        pts_value: 0,
+        pts_timescale: 0,
+        keyframe: false,
+        data: Vec::new(),
+    };
     match event {
-        StreamEvent::Start { width, height, codec, parameter_sets } => Some(ExtenderEvent {
+        StreamEvent::Start { width, height, codec, parameter_sets } => ExtenderEvent {
             kind: ExtenderEventKind::Start,
             width,
             height,
             codec: codec_tag(codec),
-            pts_value: 0,
-            pts_timescale: 0,
-            keyframe: false,
             data: protocol::annex_b_parameter_sets(&parameter_sets),
-        }),
+            ..base
+        },
         StreamEvent::Frame { pts_value, pts_timescale, keyframe, data } => {
             let mut annex_b = Vec::new();
             protocol::append_annex_b(&mut annex_b, &data);
-            Some(ExtenderEvent {
+            ExtenderEvent {
                 kind: ExtenderEventKind::Frame,
-                width: 0,
-                height: 0,
-                codec: 0,
                 pts_value,
                 pts_timescale,
                 keyframe,
                 data: annex_b,
-            })
+                ..base
+            }
         }
-        StreamEvent::Snapshot { .. }
-        | StreamEvent::HostInfo { .. }
-        | StreamEvent::WindowList { .. } => None,
+        StreamEvent::Snapshot { width, height, slot, data } => ExtenderEvent {
+            kind: ExtenderEventKind::Snapshot,
+            width,
+            height,
+            slot,
+            data,
+            ..base
+        },
+        StreamEvent::HostInfo { os, name } => ExtenderEvent {
+            kind: ExtenderEventKind::HostInfo,
+            data: format!("{os}\n{name}").into_bytes(),
+            ..base
+        },
+        StreamEvent::WindowList { windows } => {
+            let lines: Vec<String> =
+                windows.iter().map(|(id, title)| format!("{id}\t{title}")).collect();
+            ExtenderEvent {
+                kind: ExtenderEventKind::WindowList,
+                data: lines.join("\n").into_bytes(),
+                ..base
+            }
+        }
     }
 }
 
@@ -528,6 +596,63 @@ mod tests {
         // 0x4E = Page Down (next slide).
         unsafe { extender_send_key(session, 0x4E, true) };
         assert_eq!(host.join().unwrap(), Input::Key { code: 0x4E, pressed: true });
+        unsafe { extender_session_free(session) };
+    }
+
+    /// The clicker events (HostInfo, WindowList, Snapshot) surface through the C
+    /// ABI with the right kinds/payloads, and the scan/focus sends reach the host.
+    #[test]
+    fn ffi_surfaces_clicker_events_and_sends() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let host = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut r = BufReader::new(sock.try_clone().unwrap());
+            let _hello: ClientHello = protocol::read_framed(&mut r).unwrap();
+            protocol::write_framed(&mut sock, &Message::HostInfo { os: "windows".into(), name: "PC".into() }).unwrap();
+            protocol::write_framed(&mut sock, &Message::WindowList { windows: vec![(42, "slides.pdf".into())] }).unwrap();
+            protocol::write_framed(&mut sock, &Message::Snapshot { width: 960, height: 540, slot: 1, data: vec![0xFF, 0xD8, 1, 2] }).unwrap();
+            let scan: Input = protocol::read_framed(&mut r).unwrap();
+            let focus: Input = protocol::read_framed(&mut r).unwrap();
+            (scan, focus)
+        });
+
+        let c_addr = CString::new(addr).unwrap();
+        let session = unsafe { extender_session_connect(c_addr.as_ptr(), 1920, 1080, 2) };
+        assert!(!session.is_null());
+        let mut len = 0usize;
+
+        // HostInfo -> "os\nname".
+        let e = unsafe { extender_session_next_event(session) };
+        assert_eq!(unsafe { extender_event_kind(e) }, ExtenderEventKind::HostInfo);
+        let p = unsafe { extender_event_data(e, &mut len) };
+        assert_eq!(unsafe { std::slice::from_raw_parts(p, len) }, b"windows\nPC");
+        unsafe { extender_event_free(e) };
+
+        // WindowList -> "id\ttitle".
+        let e = unsafe { extender_session_next_event(session) };
+        assert_eq!(unsafe { extender_event_kind(e) }, ExtenderEventKind::WindowList);
+        let p = unsafe { extender_event_data(e, &mut len) };
+        assert_eq!(unsafe { std::slice::from_raw_parts(p, len) }, b"42\tslides.pdf");
+        unsafe { extender_event_free(e) };
+
+        // Snapshot -> slot + JPEG bytes.
+        let e = unsafe { extender_session_next_event(session) };
+        assert_eq!(unsafe { extender_event_kind(e) }, ExtenderEventKind::Snapshot);
+        assert_eq!(unsafe { extender_event_width(e) }, 960);
+        assert_eq!(unsafe { extender_event_slot(e) }, 1);
+        let p = unsafe { extender_event_data(e, &mut len) };
+        assert_eq!(unsafe { std::slice::from_raw_parts(p, len) }, &[0xFF, 0xD8, 1, 2]);
+        unsafe { extender_event_free(e) };
+
+        // Scan + focus reach the host with the right Input variants.
+        unsafe { extender_send_scan_deck(session) };
+        unsafe { extender_send_focus_window(session, 42, true) };
+        let (scan, focus) = host.join().unwrap();
+        assert_eq!(scan, Input::ScanDeck);
+        assert_eq!(focus, Input::FocusWindow { id: 42, start_show: true });
+
         unsafe { extender_session_free(session) };
     }
 }

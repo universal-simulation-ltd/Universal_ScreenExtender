@@ -28,8 +28,11 @@ typedef struct ExtenderSession ExtenderSession;
 typedef struct ExtenderEvent ExtenderEvent;
 
 typedef enum {
-  EXTENDER_EVENT_START = 0, /* width/height/codec valid; data = Annex-B param sets */
-  EXTENDER_EVENT_FRAME = 1, /* pts/keyframe/data valid; data = Annex-B NAL units   */
+  EXTENDER_EVENT_START = 0,      /* width/height/codec valid; data = Annex-B param sets */
+  EXTENDER_EVENT_FRAME = 1,      /* pts/keyframe/data valid; data = Annex-B NAL units   */
+  EXTENDER_EVENT_SNAPSHOT = 2,   /* slide preview: width/height/slot valid; data = JPEG */
+  EXTENDER_EVENT_HOSTINFO = 3,   /* host identity; data = UTF-8 "os\nname"               */
+  EXTENDER_EVENT_WINDOWLIST = 4, /* open windows; data = UTF-8 "id\ttitle" lines         */
 } ExtenderEventKind;
 
 typedef enum {
@@ -69,6 +72,8 @@ ExtenderEventKind extender_event_kind(const ExtenderEvent *event);
 uint32_t extender_event_width(const ExtenderEvent *event);
 uint32_t extender_event_height(const ExtenderEvent *event);
 uint32_t extender_event_codec(const ExtenderEvent *event); /* 0 = H.264, 1 = HEVC */
+/* Snapshot slide slot: 0 = current, -1 = previous, +1 = next. */
+int32_t extender_event_slot(const ExtenderEvent *event);
 bool extender_event_keyframe(const ExtenderEvent *event);
 int64_t extender_event_pts_value(const ExtenderEvent *event);
 int32_t extender_event_pts_timescale(const ExtenderEvent *event);
@@ -91,6 +96,16 @@ void extender_send_text(ExtenderSession *session, const char *text);
 /* Key by USB-HID keyboard usage id; pressed = down/up (send down then up for a
  * tap). Common presentation-clicker keys are defined below. */
 void extender_send_key(ExtenderSession *session, uint32_t hid_code, bool pressed);
+
+/* --- clicker controls --- */
+
+/* Pre-scan the open document for next-slide look-ahead (Snapshot events follow). */
+void extender_send_scan_deck(ExtenderSession *session);
+/* (Re)request the host's window list (a WindowList event follows). */
+void extender_send_list_windows(ExtenderSession *session);
+/* Bring the host window `id` (from a WindowList) to the foreground; start_show
+ * also starts its slideshow (F5). */
+void extender_send_focus_window(ExtenderSession *session, int64_t id, bool start_show);
 
 #define EXTENDER_KEY_PAGE_UP 0x4B   /* previous slide */
 #define EXTENDER_KEY_PAGE_DOWN 0x4E /* next slide     */
