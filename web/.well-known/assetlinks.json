@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.universalsim.extender",
+      "sha256_cert_fingerprints": [
+        "CE:14:9E:E6:61:20:D5:56:7E:B9:66:93:8A:36:E4:08:D3:B2:A4:FB:E8:13:F9:79:59:F8:B5:4F:B3:2C:4A:E3"
+      ]
+    }
+  }
+]
