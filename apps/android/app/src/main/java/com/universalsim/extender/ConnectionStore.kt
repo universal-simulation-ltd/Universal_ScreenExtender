@@ -26,6 +26,15 @@ data class SavedConnection(
 object ConnectionStore {
     private const val PREFS = "connections"
     private const val KEY = "saved"
+    private const val KEY_SENSITIVITY = "trackpadSensitivity"
+
+    /** Trackpad pointer-speed multiplier, persisted app-wide (not per-host). */
+    fun loadSensitivity(context: Context): Float =
+        prefs(context).getFloat(KEY_SENSITIVITY, 1.6f)
+
+    fun saveSensitivity(context: Context, value: Float) {
+        prefs(context).edit().putFloat(KEY_SENSITIVITY, value).apply()
+    }
 
     fun load(context: Context): List<SavedConnection> {
         val raw = prefs(context).getString(KEY, null) ?: return emptyList()
