@@ -7,9 +7,12 @@ use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
-    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
+    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DrawIconEx, GetCursorInfo, GetIconInfo, GetSystemMetrics, CURSORINFO, CURSOR_SHOWING, DI_NORMAL,
+    HICON, ICONINFO, SM_CXSCREEN, SM_CYSCREEN,
+};
 
 /// Capture the primary display, downscale so its longest side is at most `max_dim`
 /// px, and JPEG-encode it at `quality`. Returns `(width, height, jpeg_bytes)` of
@@ -75,6 +78,10 @@ pub(crate) unsafe fn grab_region_bgra(
     // beyond the primary), so this grabs whichever monitor that region covers.
     let blt_ok = BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_screen), left, top, SRCCOPY).is_ok();
 
+    // BitBlt doesn't capture the hardware cursor — draw it in ourselves so the
+    // pointer is visible (needed to actually use a mirrored/extended screen).
+    draw_cursor(hdc_mem, left, top);
+
     let mut buf = vec![0u8; (width as usize) * (height as usize) * 4];
     // Negative biHeight requests top-down rows (origin at top-left).
     let mut bmi = BITMAPINFO {
@@ -109,4 +116,34 @@ pub(crate) unsafe fn grab_region_bgra(
         return None;
     }
     Some((width as u32, height as u32, buf))
+}
+
+/// Composite the current mouse cursor into `hdc` (whose origin maps to the
+/// captured region's top-left at virtual-screen `left`/`top`). No-op if hidden.
+unsafe fn draw_cursor(hdc: HDC, left: i32, top: i32) {
+    let mut ci = CURSORINFO {
+        cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetCursorInfo(&mut ci).is_err() || ci.flags != CURSOR_SHOWING || ci.hCursor.0.is_null() {
+        return;
+    }
+    let icon = HICON(ci.hCursor.0);
+    // The hotspot (e.g. the arrow tip) sits at the cursor position, so offset the
+    // icon's top-left by the hotspot and the region origin.
+    let mut info = ICONINFO::default();
+    let (mut hx, mut hy) = (0i32, 0i32);
+    if GetIconInfo(icon, &mut info).is_ok() {
+        hx = info.xHotspot as i32;
+        hy = info.yHotspot as i32;
+        if !info.hbmColor.0.is_null() {
+            let _ = DeleteObject(info.hbmColor.into());
+        }
+        if !info.hbmMask.0.is_null() {
+            let _ = DeleteObject(info.hbmMask.into());
+        }
+    }
+    let x = ci.ptScreenPos.x - left - hx;
+    let y = ci.ptScreenPos.y - top - hy;
+    let _ = DrawIconEx(hdc, x, y, icon, 0, 0, 0, None, DI_NORMAL);
 }
