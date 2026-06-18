@@ -37,6 +37,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -779,7 +780,10 @@ fun StreamScreen(
  */
 @Composable
 fun TrackpadScreen(session: ExtenderSession) {
-    val sensitivity = 1.6f
+    val context = LocalContext.current
+    // Pointer-speed multiplier, persisted app-wide so it survives reconnects. Read
+    // inside the gesture loop so changes take effect without restarting pointerInput.
+    var sensitivity by remember { mutableStateOf(ConnectionStore.loadSensitivity(context)) }
     val scrollDivisor = 40f
     val tapSlop = 16f
     Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
@@ -801,7 +805,7 @@ fun TrackpadScreen(session: ExtenderSession) {
                                 moved += abs(pan.x) + abs(pan.y)
                                 if (maxPointers >= 2) {
                                     // Two fingers → scroll (natural direction).
-                                    session.sendScroll(pan.x / scrollDivisor, -pan.y / scrollDivisor)
+                                    session.sendScroll(pan.x / scrollDivisor * sensitivity, -pan.y / scrollDivisor * sensitivity)
                                 } else {
                                     session.sendMouseMoveRelative(pan.x * sensitivity, pan.y * sensitivity)
                                 }
@@ -826,6 +830,19 @@ fun TrackpadScreen(session: ExtenderSession) {
                 textAlign = TextAlign.Center,
             )
         }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Pointer speed: ${"%.1f".format(sensitivity)}×",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Slider(
+            value = sensitivity,
+            onValueChange = { sensitivity = it },
+            onValueChangeFinished = { ConnectionStore.saveSensitivity(context, sensitivity) },
+            valueRange = 0.5f..4f,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
