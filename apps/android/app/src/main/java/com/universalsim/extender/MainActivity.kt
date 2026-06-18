@@ -3,6 +3,7 @@ package com.universalsim.extender
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.graphics.SurfaceTexture
+import android.view.HapticFeedbackConstants
 import android.view.Surface
 import android.view.TextureView
 import androidx.activity.ComponentActivity
@@ -60,6 +61,7 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -786,11 +788,18 @@ fun StreamScreen(
 @Composable
 fun TrackpadScreen(session: ExtenderSession) {
     val context = LocalContext.current
+    val view = LocalView.current
     // Pointer-speed multiplier, persisted app-wide so it survives reconnects. Read
     // inside the gesture loop so changes take effect without restarting pointerInput.
     var sensitivity by remember { mutableStateOf(ConnectionStore.loadSensitivity(context)) }
     val scrollDivisor = 40f
     val tapSlop = 16f
+    // A click with a little haptic tick, like a real trackpad. button: 0=L, 1=R.
+    fun click(button: Int) {
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        session.sendMouseButton(button, true)
+        session.sendMouseButton(button, false)
+    }
     Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         Box(
             modifier = Modifier
@@ -820,9 +829,7 @@ fun TrackpadScreen(session: ExtenderSession) {
                         }
                         // A near-stationary lift is a click (two fingers = right).
                         if (moved < tapSlop) {
-                            val button = if (maxPointers >= 2) 1 else 0
-                            session.sendMouseButton(button, true)
-                            session.sendMouseButton(button, false)
+                            click(if (maxPointers >= 2) 1 else 0)
                         }
                     }
                 },
@@ -850,20 +857,8 @@ fun TrackpadScreen(session: ExtenderSession) {
         )
         Spacer(Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = {
-                    session.sendMouseButton(0, true)
-                    session.sendMouseButton(0, false)
-                },
-                modifier = Modifier.weight(1f),
-            ) { Text("Left click") }
-            Button(
-                onClick = {
-                    session.sendMouseButton(1, true)
-                    session.sendMouseButton(1, false)
-                },
-                modifier = Modifier.weight(1f),
-            ) { Text("Right click") }
+            Button(onClick = { click(0) }, modifier = Modifier.weight(1f)) { Text("Left click") }
+            Button(onClick = { click(1) }, modifier = Modifier.weight(1f)) { Text("Right click") }
         }
     }
 }
