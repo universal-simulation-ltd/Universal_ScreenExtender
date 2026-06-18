@@ -2,13 +2,20 @@ package com.universalsim.extender
 
 import android.graphics.BitmapFactory
 import android.os.Bundle
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.graphics.SurfaceTexture
+import android.view.Surface
+import android.view.TextureView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -42,7 +49,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
@@ -120,32 +130,40 @@ fun AppRoot() {
     val live = session
     when {
         live != null -> {
+            // In the streaming modes, tapping the video hides the top bar so the
+            // picture can fill the screen; tap again to bring it back.
+            val streaming = mode != Mode.CLICKER
+            var chrome by remember(live) { mutableStateOf(true) }
             Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val modeName = when (mode) {
-                        Mode.CLICKER -> "Clicker"
-                        Mode.VIEWER -> "Mirror"
-                        Mode.FULL_CONTROL -> "Remote control"
+                if (!streaming || chrome) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val modeName = when (mode) {
+                            Mode.CLICKER -> "Clicker"
+                            Mode.VIEWER -> "Mirror"
+                            Mode.FULL_CONTROL -> "Remote control"
+                        }
+                        // Tap the mode to go back and pick a different one for this host.
+                        Button(onClick = {
+                            live.close()
+                            session = null
+                            pending = currentAddr to currentPin
+                        }) { Text(modeName) }
+                        Button(onClick = {
+                            live.close()
+                            session = null
+                        }) { Text("Disconnect") }
                     }
-                    // Tap the mode to go back and pick a different one for this host.
-                    Button(onClick = {
-                        live.close()
-                        session = null
-                        pending = currentAddr to currentPin
-                    }) { Text(modeName) }
-                    Button(onClick = {
-                        live.close()
-                        session = null
-                    }) { Text("Disconnect") }
                 }
                 when (mode) {
                     Mode.CLICKER -> ClickerScreen(live, currentAddr)
-                    Mode.VIEWER -> StreamScreen(live, currentAddr, forwardInput = false)
-                    Mode.FULL_CONTROL -> StreamScreen(live, currentAddr, forwardInput = true)
+                    Mode.VIEWER ->
+                        StreamScreen(live, currentAddr, forwardInput = false) { chrome = !chrome }
+                    Mode.FULL_CONTROL ->
+                        StreamScreen(live, currentAddr, forwardInput = true) { chrome = !chrome }
                 }
             }
         }
@@ -598,16 +616,32 @@ private fun PreviewTile(bitmap: ImageBitmap?, dim: Boolean, label: String) {
 }
 
 /**
- * Streams the host's screen via MediaCodec into a SurfaceView. When
- * [forwardInput] is true (Full control), touches are forwarded as absolute
- * pointer input normalized to the view; in Viewer they're ignored.
+ * Streams the host's screen via MediaCodec into a TextureView (transformable, so
+ * pinch-zoom + pan work). When [forwardInput] is true (Remote control), touches
+ * are forwarded as absolute pointer input normalized to the video area. In Mirror
+ * they drive pinch-zoom + drag-to-pan, and a tap toggles the top bar.
  */
 @Composable
-fun StreamScreen(session: ExtenderSession, addr: String, forwardInput: Boolean) {
+fun StreamScreen(
+    session: ExtenderSession,
+    addr: String,
+    forwardInput: Boolean,
+    onToggleChrome: () -> Unit,
+) {
     val context = LocalContext.current
-    var inputModifier = Modifier.fillMaxSize()
-    if (forwardInput) {
-        inputModifier = inputModifier.pointerInput(session) {
+    // The host's screen aspect ratio (width/height), learned from StreamStart, so
+    // we can letterbox instead of stretching.
+    var videoAspect by remember { mutableStateOf<Float?>(null) }
+    // Mirror zoom/pan.
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    // Size the video area to the host's aspect ratio (centred → letterboxed) once
+    // known; touch input is normalised to that area so remote control maps right.
+    var viewModifier =
+        if (videoAspect != null) Modifier.aspectRatio(videoAspect!!) else Modifier.fillMaxSize()
+    viewModifier = if (forwardInput) {
+        viewModifier.pointerInput(session) {
             val w = size.width.toFloat()
             val h = size.height.toFloat()
             awaitPointerEventScope {
@@ -625,22 +659,64 @@ fun StreamScreen(session: ExtenderSession, addr: String, forwardInput: Boolean) 
                 }
             }
         }
+    } else {
+        // Mirror: pinch to zoom, drag to pan (when zoomed), tap toggles the bar.
+        viewModifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+                clip = true
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    var moved = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        if (zoom != 1f || pan != Offset.Zero) {
+                            moved = true
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            offset = if (scale > 1f) {
+                                val maxX = size.width * (scale - 1f) / 2f
+                                val maxY = size.height * (scale - 1f) / 2f
+                                Offset(
+                                    (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                    (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                )
+                            } else {
+                                Offset.Zero
+                            }
+                            event.changes.forEach { it.consume() }
+                        }
+                        if (event.changes.none { it.pressed }) break
+                    }
+                    if (!moved) onToggleChrome() // a clean tap toggles the bar
+                }
+            }
     }
 
-    Box(modifier = inputModifier) {
-        AndroidView(factory = { context ->
-            SurfaceView(context).apply {
-                holder.addCallback(object : SurfaceHolder.Callback {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        AndroidView(modifier = viewModifier, factory = { ctx ->
+            TextureView(ctx).apply {
+                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     private var decoder: VideoDecoder? = null
 
-                    override fun surfaceCreated(holder: SurfaceHolder) {
+                    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                        val surface = Surface(st)
                         session.startPump(object : ExtenderSession.FrameSink {
                             override fun onStart(width: Int, height: Int, codec: Int, csd: ByteArray) {
-                                decoder = VideoDecoder(width, height, codec, csd, holder.surface)
+                                if (height > 0) {
+                                    runOnUi { videoAspect = width.toFloat() / height.toFloat() }
+                                }
+                                decoder = VideoDecoder(width, height, codec, csd, surface)
                             }
 
                             override fun onFrame(data: ByteArray, keyframe: Boolean, ptsValue: Long) {
-                                // Host streams at 60 fps; approximate a microsecond PTS.
+                                // Host streams at ~20 fps; approximate a microsecond PTS.
                                 decoder?.decode(data, ptsValue * 16_666)
                             }
 
@@ -655,14 +731,38 @@ fun StreamScreen(session: ExtenderSession, addr: String, forwardInput: Boolean) 
                         })
                     }
 
-                    override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
-                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+                    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
                         decoder?.release()
                         decoder = null
+                        return true
                     }
-                })
+
+                    override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+                }
             }
         })
+
+        if (forwardInput) {
+            // Taps are forwarded as control, so the bar can't be toggled by tapping
+            // the screen. This dim, always-present handle does it: press and hold to
+            // show/hide the bar. Its own touches are consumed (no stray host click).
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .size(48.dp)
+                    .pointerInput(Unit) { detectTapGestures(onLongPress = { onToggleChrome() }) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.app_icon),
+                    contentDescription = "Press and hold to show or hide the controls",
+                    modifier = Modifier.size(44.dp),
+                    alpha = 0.4f,
+                )
+            }
+        }
     }
 }
 
