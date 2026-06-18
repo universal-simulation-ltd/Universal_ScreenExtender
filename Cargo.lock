@@ -1260,6 +1260,7 @@ dependencies = [
  "eframe",
  "extender-protocol",
  "image",
+ "openh264",
  "qrcode",
  "raw-window-handle",
  "serde",

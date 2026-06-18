@@ -42,8 +42,9 @@ pub fn capture_primary_jpeg(max_dim: u32, quality: u8) -> Option<(u32, u32, Vec<
 }
 
 /// Capture the primary display into a top-down BGRA byte buffer, returning its
-/// pixel dimensions and the bytes. Returns `None` if any GDI step fails.
-unsafe fn grab_primary_bgra() -> Option<(u32, u32, Vec<u8>)> {
+/// pixel dimensions and the bytes (tightly packed, `width*4` per row). Returns
+/// `None` if any GDI step fails. Also used by the mirror stream.
+pub(crate) unsafe fn grab_primary_bgra() -> Option<(u32, u32, Vec<u8>)> {
     let width = GetSystemMetrics(SM_CXSCREEN);
     let height = GetSystemMetrics(SM_CYSCREEN);
     if width <= 0 || height <= 0 {

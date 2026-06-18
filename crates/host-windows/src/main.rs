@@ -10,6 +10,7 @@ mod firewall;
 mod gui;
 mod qr;
 mod snapshot;
+mod stream;
 mod wifi;
 mod winlist;
 
@@ -18,10 +19,13 @@ use std::mem::size_of;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use extender_protocol::{self as protocol, Button, ClientHello, ClientPlatform, Input, Message};
+use extender_protocol::{
+    self as protocol, Button, CaptureMode, ClientHello, ClientPlatform, Input, Message,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_HWHEEL,
@@ -71,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_cli(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(addr)?;
     println!(
-        "extender-host-windows listening on {addr} (protocol v{}, input-only — no video)",
+        "extender-host-windows listening on {addr} (protocol v{}, clicker + screen mirror)",
         protocol::PROTOCOL_VERSION
     );
     let stop = AtomicBool::new(false);
@@ -105,9 +109,9 @@ pub(crate) fn serve_loop(
                 let peer = peer_addr.to_string();
                 // Handshake first: its hello carries the device platform. (The host
                 // always serves input-only regardless of the requested mode.)
-                if let Some(platform) = read_hello(&mut stream, &peer, expected_pin) {
+                if let Some((platform, mode)) = read_hello(&mut stream, &peer, expected_pin) {
                     on_event(HostEvent::Connected { peer: peer.clone(), platform });
-                    if let Err(e) = serve(stream) {
+                    if let Err(e) = serve(stream, mode) {
                         on_event(HostEvent::Error(format!("session with {peer} ended: {e}")));
                     }
                     on_event(HostEvent::Disconnected(peer));
@@ -127,7 +131,11 @@ pub(crate) fn serve_loop(
 /// `None` (and logs) on a missing or garbled hello so the caller skips this
 /// client. The advertised size is irrelevant here — without capture there's no
 /// display geometry to size.
-fn read_hello(stream: &mut TcpStream, peer: &str, expected_pin: u32) -> Option<ClientPlatform> {
+fn read_hello(
+    stream: &mut TcpStream,
+    peer: &str,
+    expected_pin: u32,
+) -> Option<(ClientPlatform, CaptureMode)> {
     let hello: ClientHello = match protocol::read_framed(stream) {
         Ok(h) => h,
         Err(e) => {
@@ -148,10 +156,10 @@ fn read_hello(stream: &mut TcpStream, peer: &str, expected_pin: u32) -> Option<C
         return None;
     }
     println!(
-        "client {peer} hello: {}x{}, mode {:?}, platform {:?}; serving input-only (no video)",
+        "client {peer} hello: {}x{}, mode {:?}, platform {:?}",
         hello.width, hello.height, hello.capture_mode, hello.platform
     );
-    Some(hello.platform)
+    Some((hello.platform, hello.capture_mode))
 }
 
 /// A request to the snapshot thread (which owns the downstream writer).
@@ -168,18 +176,30 @@ enum SnapReq {
     FocusWindow(i64, bool),
 }
 
-/// Read input events from the client and inject them into the local desktop until
-/// the client disconnects. A second thread pushes slide previews downstream and,
-/// on request, pre-scans the deck so it can also preview the *next* slide.
-fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+/// Serve one client. We always identify ourselves, then branch on the requested
+/// [`CaptureMode`]: `ControlOnly` is the clicker (input + slide previews), while
+/// `MirrorPrimary`/`VirtualDisplay` mirror the screen (H.264) while still
+/// injecting input (for remote control). Returns when the client disconnects.
+fn serve(stream: TcpStream, mode: CaptureMode) -> Result<(), Box<dyn std::error::Error>> {
     let _ = stream.set_nodelay(true); // disable Nagle — low latency for input
 
-    // A separate handle on the socket carries downstream previews; the snapshot
+    // A second handle on the socket carries everything downstream; the worker
     // thread owns it so the input loop never blocks on capture/encode.
     let mut writer = stream.try_clone()?;
     // Identify ourselves first so the client can label/icon a saved connection.
     let name = std::env::var("COMPUTERNAME").unwrap_or_default();
     let _ = protocol::write_framed(&mut writer, &Message::HostInfo { os: "windows".into(), name });
+
+    if mode == CaptureMode::ControlOnly {
+        serve_clicker(stream, writer)
+    } else {
+        serve_mirror(stream, writer)
+    }
+}
+
+/// Clicker: inject input, and drive slide previews / deck scan / window picker on
+/// a dedicated thread.
+fn serve_clicker(stream: TcpStream, writer: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let (snap_tx, snap_rx) = mpsc::channel::<SnapReq>();
     let snap_thread = thread::spawn(move || snapshot_loop(writer, &snap_rx));
 
@@ -216,6 +236,23 @@ fn serve(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
 
     drop(snap_tx); // unblock the snapshot thread so it exits
     let _ = snap_thread.join();
+    Ok(())
+}
+
+/// Mirror / remote control: stream the screen (H.264) on a worker thread while the
+/// input loop injects mouse/keys.
+fn serve_mirror(stream: TcpStream, writer: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_worker = stop.clone();
+    let stream_thread = thread::spawn(move || stream::run(writer, &stop_worker));
+
+    let mut input = stream;
+    while let Ok(event) = protocol::read_framed::<_, Input>(&mut input) {
+        inject(event);
+    }
+
+    stop.store(true, Ordering::Relaxed); // end the stream when the client goes
+    let _ = stream_thread.join();
     Ok(())
 }
 

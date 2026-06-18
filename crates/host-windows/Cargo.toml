@@ -24,6 +24,9 @@ windows = { version = "0.62", features = [
 # Snapshots: encode the captured screen to JPEG. PNG: decode the embedded UNI·SIM
 # logo for the connection QR.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Mirror/remote-control modes: H.264-encode the captured screen (software, builds
+# from source via openh264-sys2 — needs NASM, like the desktop client's decoder).
+openh264 = "0.9"
 # Host control window (GUI mode) + connection QR code. "persistence" remembers
 # the "don't connect automatically" preference across launches.
 eframe = { version = "0.29", features = ["persistence"] }
