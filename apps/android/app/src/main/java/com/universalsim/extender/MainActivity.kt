@@ -61,15 +61,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import androidx.compose.ui.viewinterop.AndroidView
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlin.concurrent.thread
 
 /** The three ways to use the app; they differ only in UI + whether they stream. */
-enum class Mode { FULL_CONTROL, VIEWER, CLICKER }
+enum class Mode { FULL_CONTROL, VIEWER, CLICKER, TRACKPAD }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,8 +106,8 @@ fun AppRoot() {
         currentPin = pin
         connecting = true
         status = ""
-        // Clicker needs no video (control-only); the others mirror the screen.
-        val capture = if (chosenMode == Mode.CLICKER) {
+        // Clicker and Trackpad need no video (control-only); the rest mirror.
+        val capture = if (chosenMode == Mode.CLICKER || chosenMode == Mode.TRACKPAD) {
             ExtenderSession.MODE_CONTROL_ONLY
         } else {
             ExtenderSession.MODE_MIRROR
@@ -132,7 +134,7 @@ fun AppRoot() {
         live != null -> {
             // In the streaming modes, tapping the video hides the top bar so the
             // picture can fill the screen; tap again to bring it back.
-            val streaming = mode != Mode.CLICKER
+            val streaming = mode == Mode.VIEWER || mode == Mode.FULL_CONTROL
             var chrome by remember(live) { mutableStateOf(true) }
             Column(modifier = Modifier.fillMaxSize()) {
                 if (!streaming || chrome) {
@@ -145,6 +147,7 @@ fun AppRoot() {
                             Mode.CLICKER -> "Clicker"
                             Mode.VIEWER -> "Mirror"
                             Mode.FULL_CONTROL -> "Remote control"
+                            Mode.TRACKPAD -> "Trackpad"
                         }
                         // Tap the mode to go back and pick a different one for this host.
                         Button(onClick = {
@@ -160,6 +163,7 @@ fun AppRoot() {
                 }
                 when (mode) {
                     Mode.CLICKER -> ClickerScreen(live, currentAddr)
+                    Mode.TRACKPAD -> TrackpadScreen(live)
                     Mode.VIEWER ->
                         StreamScreen(live, currentAddr, forwardInput = false) { chrome = !chrome }
                     Mode.FULL_CONTROL ->
@@ -377,7 +381,9 @@ fun ModePickerScreen(addr: String, onPick: (Mode, Boolean) -> Unit, onBack: () -
         ModeOption("Remote control", "See the screen and control it (mouse + keys)") {
             onPick(Mode.FULL_CONTROL, rememberChoice)
         }
-        ModeOption("Trackpad", "Coming soon", enabled = false) {}
+        ModeOption("Trackpad", "Use the phone as a touchpad — move, tap, scroll") {
+            onPick(Mode.TRACKPAD, rememberChoice)
+        }
         ModeOption("Second screen", "Use this phone as an extra display — coming soon", enabled = false) {}
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -762,6 +768,80 @@ fun StreamScreen(
                     alpha = 0.4f,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Trackpad: the phone becomes a touchpad over a control-only (no-video) session.
+ * One-finger drag moves the cursor (relative), a tap left-clicks, two-finger drag
+ * scrolls, and a two-finger tap right-clicks. Explicit buttons sit below.
+ */
+@Composable
+fun TrackpadScreen(session: ExtenderSession) {
+    val sensitivity = 1.6f
+    val scrollDivisor = 40f
+    val tapSlop = 16f
+    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .pointerInput(session) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        var moved = 0f
+                        var maxPointers = 1
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            maxPointers = maxOf(maxPointers, event.changes.count { it.pressed })
+                            val pan = event.calculatePan()
+                            if (pan != Offset.Zero) {
+                                moved += abs(pan.x) + abs(pan.y)
+                                if (maxPointers >= 2) {
+                                    // Two fingers → scroll (natural direction).
+                                    session.sendScroll(pan.x / scrollDivisor, -pan.y / scrollDivisor)
+                                } else {
+                                    session.sendMouseMoveRelative(pan.x * sensitivity, pan.y * sensitivity)
+                                }
+                                event.changes.forEach { it.consume() }
+                            }
+                            if (event.changes.none { it.pressed }) break
+                        }
+                        // A near-stationary lift is a click (two fingers = right).
+                        if (moved < tapSlop) {
+                            val button = if (maxPointers >= 2) 1 else 0
+                            session.sendMouseButton(button, true)
+                            session.sendMouseButton(button, false)
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "Trackpad\n\nDrag to move • tap to click\nTwo fingers: scroll • two-finger tap: right-click",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    session.sendMouseButton(0, true)
+                    session.sendMouseButton(0, false)
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Left click") }
+            Button(
+                onClick = {
+                    session.sendMouseButton(1, true)
+                    session.sendMouseButton(1, false)
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Right click") }
         }
     }
 }

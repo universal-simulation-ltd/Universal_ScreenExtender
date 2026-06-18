@@ -27,6 +27,7 @@ object ExtenderNative {
 
     external fun nativeSendKey(handle: Long, hidCode: Int, pressed: Boolean)
     external fun nativeSendMouseMove(handle: Long, x: Float, y: Float)
+    external fun nativeSendMouseMoveRelative(handle: Long, dx: Float, dy: Float)
     external fun nativeSendMouseButton(handle: Long, button: Int, pressed: Boolean)
     external fun nativeSendScroll(handle: Long, dx: Float, dy: Float)
     external fun nativeSendTouch(handle: Long, id: Int, phase: Int, x: Float, y: Float)

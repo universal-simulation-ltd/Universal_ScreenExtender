@@ -279,6 +279,20 @@ pub unsafe extern "C" fn extender_send_mouse_move(session: *mut ExtenderSession,
     send(session, Input::MouseMove { x, y });
 }
 
+/// Move the cursor by a relative delta in pixels (the trackpad). Needs no display
+/// geometry, so it works against an input-only host.
+///
+/// # Safety
+/// As [`extender_send_mouse_move`].
+#[no_mangle]
+pub unsafe extern "C" fn extender_send_mouse_move_relative(
+    session: *mut ExtenderSession,
+    dx: f32,
+    dy: f32,
+) {
+    send(session, Input::MouseMoveRelative { dx, dy });
+}
+
 /// Send a mouse button state change.
 ///
 /// # Safety

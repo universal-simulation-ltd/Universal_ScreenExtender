@@ -101,6 +101,9 @@ class ExtenderSession private constructor(private var handle: Long) {
     }
 
     fun sendKey(hid: Int, pressed: Boolean) = ifLive { ExtenderNative.nativeSendKey(handle, hid, pressed) }
+    fun sendMouseMoveRelative(dx: Float, dy: Float) = ifLive { ExtenderNative.nativeSendMouseMoveRelative(handle, dx, dy) }
+    /** [button]: 0 = left, 1 = right, 2 = middle. */
+    fun sendMouseButton(button: Int, pressed: Boolean) = ifLive { ExtenderNative.nativeSendMouseButton(handle, button, pressed) }
     fun sendTouch(id: Int, phase: Int, x: Float, y: Float) = ifLive { ExtenderNative.nativeSendTouch(handle, id, phase, x, y) }
     fun sendSecondaryClick(x: Float, y: Float) = ifLive { ExtenderNative.nativeSendSecondaryClick(handle, x, y) }
     fun sendScroll(dx: Float, dy: Float) = ifLive { ExtenderNative.nativeSendScroll(handle, dx, dy) }

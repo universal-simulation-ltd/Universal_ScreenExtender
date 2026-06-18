@@ -30,7 +30,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+    MOUSE_EVENT_FLAGS,
     VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11,
     VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_HOME, VK_INSERT,
     VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_NEXT, VK_OEM_1, VK_OEM_2, VK_OEM_3,
@@ -458,13 +459,11 @@ fn inject(input: Input) {
                 send_mouse(MOUSEEVENTF_HWHEEL, (dx * 120.0) as i32);
             }
         }
-        // TODO: MouseMove/MouseMoveRelative/Touch/Gesture need display geometry to
-        // map normalized coordinates to screen pixels; this input-only host has no
-        // capture and therefore no geometry, so pointer positioning is ignored.
-        Input::MouseMove { .. }
-        | Input::MouseMoveRelative { .. }
-        | Input::Touch { .. }
-        | Input::Gesture(_) => {}
+        // Relative motion (the trackpad) needs no geometry — inject it directly.
+        Input::MouseMoveRelative { dx, dy } => send_mouse_move_relative(dx as i32, dy as i32),
+        // Absolute pointer positioning would need display geometry this input-only
+        // host doesn't have, so it's ignored.
+        Input::MouseMove { .. } | Input::Touch { .. } | Input::Gesture(_) => {}
         // Handled in serve() (control requests, not injectable events).
         Input::ScanDeck | Input::ListWindows | Input::FocusWindow { .. } => {}
     }
@@ -543,6 +542,30 @@ fn send_mouse(flags: MOUSE_EVENT_FLAGS, mouse_data: i32) {
                 dy: 0,
                 mouseData: mouse_data as u32,
                 dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    unsafe {
+        SendInput(&[input], size_of::<INPUT>() as i32);
+    }
+}
+
+/// Move the cursor by a relative delta (the trackpad). `MOUSEEVENTF_MOVE` without
+/// `ABSOLUTE` is a relative move, so no display geometry is needed.
+fn send_mouse_move_relative(dx: i32, dy: i32) {
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
                 time: 0,
                 dwExtraInfo: 0,
             },

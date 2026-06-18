@@ -271,6 +271,17 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeSendM
     send_input(handle, Input::MouseMove { x, y });
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeSendMouseMoveRelative(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    dx: jfloat,
+    dy: jfloat,
+) {
+    send_input(handle, Input::MouseMoveRelative { dx, dy });
+}
+
 /// `button`: 0 = left, 1 = right, 2 = middle.
 #[no_mangle]
 pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeSendMouseButton(

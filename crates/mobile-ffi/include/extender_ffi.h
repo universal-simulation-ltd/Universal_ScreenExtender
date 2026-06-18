@@ -86,6 +86,8 @@ void extender_event_free(ExtenderEvent *event);
 /* --- upstream input (x/y normalized [0,1] from top-left) --- */
 
 void extender_send_mouse_move(ExtenderSession *session, float x, float y);
+/* Relative cursor move in pixels (trackpad) — needs no display geometry. */
+void extender_send_mouse_move_relative(ExtenderSession *session, float dx, float dy);
 void extender_send_mouse_button(ExtenderSession *session,
                                 ExtenderMouseButton button, bool pressed);
 void extender_send_scroll(ExtenderSession *session, float dx, float dy);
