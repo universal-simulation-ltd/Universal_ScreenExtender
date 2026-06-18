@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use extender_protocol::{self as protocol, Codec, Message};
 use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile, RateControlMode,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile,
+    RateControlMode, UsageType,
 };
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use openh264::OpenH264API;
@@ -26,8 +27,8 @@ use windows::Win32::Graphics::Gdi::{
 /// `MONITORINFOF_PRIMARY` — the `dwFlags` bit marking the primary monitor.
 const MONITORINFOF_PRIMARY: u32 = 1;
 
-/// Target frame rate for the mirror (software encode — kept modest).
-const FPS: u32 = 20;
+/// Target frame rate.
+const FPS: u32 = 30;
 /// Target H.264 bitrate.
 const BITRATE_BPS: u32 = 12_000_000;
 
@@ -84,6 +85,11 @@ fn run_inner(
         .bitrate(BitRate::from_bps(BITRATE_BPS))
         .max_frame_rate(FrameRate::from_hz(FPS as f32))
         .rate_control_mode(RateControlMode::Bitrate)
+        // Tuned for real-time desktop streaming: screen-content mode, fastest
+        // complexity, and a few encode threads so software keeps up at 30 fps.
+        .usage_type(UsageType::ScreenContentRealTime)
+        .complexity(Complexity::Low)
+        .num_threads(4)
         // Baseline decodes everywhere (MediaCodec / VideoToolbox / openh264).
         .profile(Profile::Baseline)
         // Keyframe every ~2s so a client locks on (and recovers) quickly.
