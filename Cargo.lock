@@ -1254,6 +1254,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "extender-host-macos"
+version = "0.1.0"
+dependencies = [
+ "apple-cf",
+ "cc",
+ "core-graphics",
+ "eframe",
+ "extender-protocol",
+ "image",
+ "qrcode",
+ "screencapturekit",
+ "serde",
+ "videotoolbox",
+]
+
+[[package]]
 name = "extender-host-windows"
 version = "0.1.0"
 dependencies = [
