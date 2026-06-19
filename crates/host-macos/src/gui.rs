@@ -24,6 +24,7 @@ const RECENT_MAX: usize = 8;
 const OPENSOURCE_URL: &str = "https://opensource.unisim.co.uk/screens";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHANGELOG: &[&str] = &[
+    "• LAN discovery — nearby hosts appear automatically",
     "• macOS GUI host — same wizard as Windows",
     "• Combined Wi-Fi + connect QR (Step 2)",
     "• 4-digit pairing PIN in every connect QR",
@@ -56,6 +57,14 @@ struct HostApp {
     wifi_show_password: bool,
     show_step2: bool,
     show_pin: bool,
+    /// LAN peers discovered via UDP multicast beacon.
+    discovered_peers: Arc<Mutex<Vec<crate::discovery::DiscoveredPeer>>>,
+    /// Stop flag for the always-on listener thread (set only when the app exits).
+    listener_stop: Arc<AtomicBool>,
+    /// Our own LAN IP, shared with the listener so it can filter out our beacon.
+    own_ip: Arc<Mutex<Option<String>>>,
+    /// Stop flag for the beacon sender (set in stop(), started fresh in start()).
+    beacon_stop: Arc<AtomicBool>,
 }
 
 impl HostApp {
@@ -68,6 +77,15 @@ impl HostApp {
         if pin == 0 {
             pin = gen_pin();
         }
+        let discovered_peers = Arc::new(Mutex::new(Vec::new()));
+        let listener_stop = Arc::new(AtomicBool::new(false));
+        let own_ip: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        crate::discovery::start_listener(
+            discovered_peers.clone(),
+            listener_stop.clone(),
+            cc.egui_ctx.clone(),
+            own_ip.clone(),
+        );
         Self {
             pin,
             show_pc_info: false,
@@ -90,6 +108,10 @@ impl HostApp {
             wifi_show_password: false,
             show_step2: false,
             show_pin: false,
+            discovered_peers,
+            listener_stop,
+            own_ip,
+            beacon_stop: Arc::new(AtomicBool::new(true)), // starts in stopped state
         }
     }
 
@@ -158,10 +180,20 @@ impl HostApp {
         self.wifi_qr = None;
         self.combined_qr = None;
         self.running = true;
+
+        // Tell the listener our own IP so it can ignore our own beacons.
+        *self.own_ip.lock().unwrap() = Some(ip.clone());
+        // Stop the previous beacon (if any) and start a fresh one.
+        self.beacon_stop.store(true, Ordering::Relaxed);
+        let beacon_stop = Arc::new(AtomicBool::new(false));
+        self.beacon_stop = beacon_stop.clone();
+        crate::discovery::start_beacon(crate::host_name(), port, beacon_stop);
     }
 
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.beacon_stop.store(true, Ordering::Relaxed);
+        *self.own_ip.lock().unwrap() = None;
         self.running = false;
         self.address = None;
         self.combined_qr = None;
@@ -266,6 +298,30 @@ impl HostApp {
                 "This Mac isn't on Wi-Fi — put your phone on the same network, \
                  then use the details below.",
             );
+        }
+
+        // Nearby — other Universal Screens hosts discovered on the LAN via UDP
+        // multicast. Primary use case: Mac → Mac / Mac → PC (no camera to scan a QR).
+        let nearby = self.discovered_peers.lock().unwrap().clone();
+        if !nearby.is_empty() {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Nearby").strong());
+            for peer in &nearby {
+                ui.horizontal(|ui| {
+                    device_icon(ui, DeviceKind::Other, 16.0);
+                    ui.label(format!("{} · {}:{}", peer.name, peer.addr, peer.port));
+                    if ui.small_button("Connect").clicked() {
+                        let url = connect_url(
+                            &format!("{}:{}", peer.addr, peer.port),
+                            0,
+                            None,
+                        );
+                        let _ = std::process::Command::new("open").arg(&url).spawn();
+                    }
+                });
+            }
         }
 
         ui.add_space(8.0);

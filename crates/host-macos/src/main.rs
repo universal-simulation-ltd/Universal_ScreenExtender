@@ -4,6 +4,7 @@
 //!      cargo run -p extender-host-macos -- 0.0.0.0:9000  (headless)
 //! Requires Screen Recording + Accessibility permissions on first run.
 
+mod discovery;
 mod gui;
 mod host;
 mod qr;
