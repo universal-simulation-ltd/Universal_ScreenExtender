@@ -6,10 +6,6 @@ use image::{imageops, Rgba, RgbaImage};
 const LOGO_PNG: &[u8] = include_bytes!("../assets/unisim-icon.png");
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/app-icon.png");
 
-pub fn branded_qr(text: &str) -> Option<egui::ColorImage> {
-    branded_qr_with(text, LOGO_PNG)
-}
-
 pub fn branded_qr_app(text: &str) -> Option<egui::ColorImage> {
     branded_qr_with(text, APP_ICON_PNG)
 }

@@ -1,5 +1,5 @@
-//! Read the Mac's current Wi-Fi network so the GUI can offer a Wi-Fi join QR
-//! (step 1 of pairing) and embed the SSID in the combined connect QR.
+//! Read the Mac's current Wi-Fi network so the GUI can embed the SSID in the
+//! combined connect QR (https URL fragment) and show the network name in the UI.
 //!
 //! Uses the `airport` CLI — private but present on macOS 10.7 through 14.
 //! Password extraction requires a keychain dialog and is deferred to a later
@@ -19,13 +19,6 @@ pub struct WifiInfo {
 }
 
 impl WifiInfo {
-    pub fn qr_payload(&self) -> String {
-        match &self.password {
-            Some(p) => format!("WIFI:T:{};S:{};P:{};;", self.auth, esc(&self.ssid), esc(p)),
-            None => format!("WIFI:T:nopass;S:{};;", esc(&self.ssid)),
-        }
-    }
-
     pub fn masked_password(&self) -> Option<String> {
         self.password.as_ref().map(|p| "•".repeat(p.chars().count().min(12)))
     }
@@ -55,13 +48,3 @@ fn current_ssid() -> Option<String> {
     None
 }
 
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if matches!(c, '\\' | ';' | ',' | ':' | '"') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}

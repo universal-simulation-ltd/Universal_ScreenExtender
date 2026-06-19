@@ -24,9 +24,9 @@ const RECENT_MAX: usize = 8;
 const OPENSOURCE_URL: &str = "https://opensource.unisim.co.uk/screens";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHANGELOG: &[&str] = &[
+    "• One-step connect — any camera scans to connect",
     "• LAN discovery — nearby hosts appear automatically",
     "• macOS GUI host — same wizard as Windows",
-    "• Combined Wi-Fi + connect QR (Step 2)",
     "• 4-digit pairing PIN in every connect QR",
     "• Universal navbar with Actions & Profile menus",
 ];
@@ -48,14 +48,11 @@ struct HostApp {
     status: Arc<Mutex<String>>,
     recent: Arc<Mutex<Vec<RecentConn>>>,
     address: Option<String>,
-    applink_qr: Option<egui::TextureHandle>,
     logo: Option<egui::TextureHandle>,
     app_logo: Option<egui::TextureHandle>,
     wifi: Option<crate::wifi::WifiInfo>,
-    wifi_qr: Option<egui::TextureHandle>,
     combined_qr: Option<egui::TextureHandle>,
     wifi_show_password: bool,
-    show_step2: bool,
     show_pin: bool,
     /// LAN peers discovered via UDP multicast beacon.
     discovered_peers: Arc<Mutex<Vec<crate::discovery::DiscoveredPeer>>>,
@@ -99,14 +96,11 @@ impl HostApp {
             status: Arc::new(Mutex::new("Not started".to_owned())),
             recent: Arc::new(Mutex::new(recent)),
             address: None,
-            applink_qr: None,
             logo: None,
             app_logo: None,
             wifi: crate::wifi::current_wifi(),
-            wifi_qr: None,
             combined_qr: None,
             wifi_show_password: false,
-            show_step2: false,
             show_pin: false,
             discovered_peers,
             listener_stop,
@@ -177,7 +171,6 @@ impl HostApp {
         let ip = best_lan_ip().unwrap_or_else(|| "127.0.0.1".to_owned());
         self.address = Some(format!("{ip}:{port}"));
         self.wifi = crate::wifi::current_wifi();
-        self.wifi_qr = None;
         self.combined_qr = None;
         self.running = true;
 
@@ -199,82 +192,62 @@ impl HostApp {
         self.combined_qr = None;
     }
 
-    fn step1_getapp(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        step_header(ui, "Step 1", "Get the app");
-        scan_subheader(ui, "Scan with your mobile phone camera");
-        if self.applink_qr.is_none() {
-            if let Some(image) = crate::qr::branded_qr(OPENSOURCE_URL) {
-                self.applink_qr =
-                    Some(ctx.load_texture("applink_qr", image, egui::TextureOptions::LINEAR));
-            }
-        }
-        if let Some(qr) = &self.applink_qr {
-            ui.add(
-                egui::Image::from_texture(egui::load::SizedTexture::new(
-                    qr.id(),
-                    egui::vec2(200.0, 200.0),
-                ))
-                .rounding(14.0),
-            );
-        }
-        ui.small(
-            "Point your phone's camera here — opens Universal Screens, \
-             or the download page if you don't have it yet.",
+    /// Single connect step: one QR that works for any camera (opens the site →
+    /// deep-links into the app or shows the download page) and for the in-app
+    /// scanner (connects directly). Wi-Fi details shown as text below the QR.
+    fn show_connect(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Scan to connect").strong().size(26.0));
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Use your phone camera or the Universal Screens app")
+                .strong()
+                .size(15.0),
         );
-        ui.add_space(2.0);
-        ui.small("Got it on your phone? Tap \u{201c}I have the app\u{201d} below to continue here.");
-    }
+        ui.add_space(10.0);
 
-    fn step2_connect(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        step_header(ui, "Step 2", "Scan to connect");
-        scan_subheader(ui, "Scan directly in the Universal Screens App");
-
-        if let Some(wifi) = &self.wifi {
-            if self.running && self.address.is_some() {
-                if self.combined_qr.is_none() {
-                    if let Some(addr) = &self.address {
-                        let payload = connect_url(addr, self.pin, Some(wifi));
-                        if let Some(image) = crate::qr::branded_qr_app(&payload) {
-                            self.combined_qr = Some(ctx.load_texture(
-                                "combined_qr",
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            ));
-                        }
-                    }
-                }
-                if let Some(qr) = &self.combined_qr {
-                    ui.add(
-                        egui::Image::from_texture(egui::load::SizedTexture::new(
-                            qr.id(),
-                            egui::vec2(200.0, 200.0),
-                        ))
-                        .rounding(14.0),
-                    );
-                }
-                ui.small("In the app, tap Scan and point it here — joins this Wi-Fi and connects.");
-            } else {
-                if self.wifi_qr.is_none() {
-                    if let Some(image) = crate::qr::branded_qr_app(&wifi.qr_payload()) {
-                        self.wifi_qr = Some(ctx.load_texture(
-                            "wifi_qr",
+        if self.running && self.address.is_some() {
+            if self.combined_qr.is_none() {
+                if let Some(addr) = &self.address {
+                    let url = connect_url(addr, self.pin, self.wifi.as_ref());
+                    if let Some(image) = crate::qr::branded_qr_app(&url) {
+                        self.combined_qr = Some(ctx.load_texture(
+                            "combined_qr",
                             image,
                             egui::TextureOptions::LINEAR,
                         ));
                     }
                 }
-                if let Some(qr) = &self.wifi_qr {
-                    ui.add(
-                        egui::Image::from_texture(egui::load::SizedTexture::new(
-                            qr.id(),
-                            egui::vec2(190.0, 190.0),
-                        ))
-                        .rounding(14.0),
-                    );
-                }
-                ui.small("Scan to join this Mac's Wi-Fi.");
             }
-            ui.add_space(4.0);
+            if let Some(qr) = &self.combined_qr {
+                ui.add(
+                    egui::Image::from_texture(egui::load::SizedTexture::new(
+                        qr.id(),
+                        egui::vec2(200.0, 200.0),
+                    ))
+                    .rounding(14.0),
+                );
+            }
+        } else if !self.running {
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("▶  Start hosting")
+                            .color(egui::Color32::WHITE)
+                            .size(15.0),
+                    )
+                    .fill(BRAND)
+                    .min_size(egui::vec2(180.0, 36.0))
+                    .rounding(10.0),
+                )
+                .clicked()
+            {
+                self.start(ctx);
+            }
+        }
+
+        if let Some(wifi) = &self.wifi {
+            ui.add_space(8.0);
             ui.label(egui::RichText::new(format!("Network: {}", wifi.ssid)).strong());
             if let Some(masked) = wifi.masked_password() {
                 let shown = if self.wifi_show_password {
@@ -293,11 +266,6 @@ impl HostApp {
             } else {
                 ui.label("Password: (tap to join / open network)");
             }
-        } else {
-            ui.small(
-                "This Mac isn't on Wi-Fi — put your phone on the same network, \
-                 then use the details below.",
-            );
         }
 
         // Nearby — other Universal Screens hosts discovered on the LAN via UDP
@@ -348,18 +316,13 @@ impl HostApp {
                     }
                 }
             } else {
-                ui.label("Not connected.");
-                if ui.button("Start").clicked() {
-                    self.start(ctx);
-                }
+                ui.label(format!("Status: {}", self.status.lock().unwrap()));
             }
 
             ui.add_space(6.0);
-            ui.label(format!("Status: {}", self.status.lock().unwrap()));
 
             let recent = self.recent.lock().unwrap().clone();
             if !recent.is_empty() {
-                ui.add_space(6.0);
                 ui.separator();
                 ui.label("Recent connections");
                 for conn in recent.iter().take(3) {
@@ -494,50 +457,6 @@ impl HostApp {
                 );
 
                 sep_dot(ui, dark);
-
-                let lock = ui.button("🔒").on_hover_text("Security");
-                let lock_popup = ui.make_persistent_id("security_popup");
-                if lock.clicked() {
-                    ui.memory_mut(|m| m.toggle_popup(lock_popup));
-                }
-                egui::popup::popup_below_widget(
-                    ui,
-                    lock_popup,
-                    &lock,
-                    egui::PopupCloseBehavior::CloseOnClickOutside,
-                    |ui| {
-                        ui.set_max_width(320.0);
-                        ui.label(egui::RichText::new("🔒  Security").strong().size(15.0));
-                        ui.separator();
-                        ui.label(egui::RichText::new("What's protected").strong());
-                        ui.label(
-                            "• A 4-digit pairing PIN is required to connect — \
-                             scanning the QR fills it in automatically.",
-                        );
-                        ui.label(
-                            "• The host only accepts connections while this window \
-                             is open; close it to stop.",
-                        );
-                        ui.add_space(8.0);
-                        ui.label(egui::RichText::new("Not fully locked down").strong());
-                        ui.label(
-                            "• Traffic is sent unencrypted over your local network \
-                             (no TLS). Only use it on networks you trust.",
-                        );
-                        ui.label(
-                            "• The PIN is a basic gate, not encryption: anyone on \
-                             the same network who has the PIN can control this Mac.",
-                        );
-                        ui.label(
-                            "• Wrong PINs aren't rate-limited or locked out, and \
-                             there's no per-device approval.",
-                        );
-                        ui.add_space(6.0);
-                        ui.small("Tip: regenerate the PIN (Actions menu) after sharing your screen.");
-                    },
-                );
-
-                sep_dot(ui, dark);
                 ui.menu_button("Profile", |ui| {
                     let mut dark = self.dark_mode.unwrap_or(ui.visuals().dark_mode);
                     if ui.checkbox(&mut dark, "🌙  Dark mode").changed() {
@@ -612,6 +531,64 @@ impl eframe::App for HostApp {
                 ui.painter().hline(screen.x_range(), y, egui::Stroke::new(1.0, border));
             });
 
+        // Footer: "With ❤ from UNISIM.co.uk" + security info button.
+        egui::TopBottomPanel::bottom("footer")
+            .exact_height(36.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(egui::Margin { left: 16.0, right: 12.0, top: 6.0, bottom: 6.0 })
+                    .stroke(egui::Stroke::NONE),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let y = ui.max_rect().top() - 6.0;
+                let screen = ctx.screen_rect();
+                ui.painter().hline(screen.x_range(), y, egui::Stroke::new(1.0, border));
+
+                let muted = if dark {
+                    egui::Color32::from_rgb(0x9a, 0x9a, 0xa6)
+                } else {
+                    egui::Color32::from_rgb(0x6b, 0x6b, 0x76)
+                };
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("With \u{2764} from UNISIM.co.uk").color(muted).size(12.0),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let lock = ui.button("\u{1f512}").on_hover_text("Security");
+                        let lock_popup = ui.make_persistent_id("security_popup");
+                        if lock.clicked() {
+                            ui.memory_mut(|m| m.toggle_popup(lock_popup));
+                        }
+                        egui::popup::popup_below_widget(
+                            ui,
+                            lock_popup,
+                            &lock,
+                            egui::PopupCloseBehavior::CloseOnClickOutside,
+                            |ui| {
+                                ui.set_max_width(320.0);
+                                ui.label(
+                                    egui::RichText::new("\u{1f512}  Security").strong().size(15.0),
+                                );
+                                ui.separator();
+                                ui.label(egui::RichText::new("What's protected").strong());
+                                ui.label("• A 4-digit pairing PIN is required to connect — scanning the QR fills it in automatically.");
+                                ui.label("• The host only accepts connections while this window is open; close it to stop.");
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new("Not fully locked down").strong());
+                                ui.label("• Traffic is sent unencrypted over your local network (no TLS). Only use it on networks you trust.");
+                                ui.label("• The PIN is a basic gate, not encryption: anyone on the same network who has the PIN (or sees the QR) can control this Mac.");
+                                ui.label("• Wrong PINs aren't rate-limited or locked out, and there's no per-device approval.");
+                                ui.label("• The host listens on all network interfaces on its port.");
+                                ui.add_space(6.0);
+                                ui.small("Tip: regenerate the PIN (Actions menu) after sharing your screen.");
+                            },
+                        );
+                    });
+                });
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.vertical_centered(|ui| {
@@ -627,29 +604,7 @@ impl eframe::App for HostApp {
                 });
 
                 ui.vertical_centered(|ui| {
-                    if self.show_step2 {
-                        self.step2_connect(ctx, ui);
-                        ui.add_space(8.0);
-                        if ui.button("Back").clicked() {
-                            self.show_step2 = false;
-                        }
-                    } else {
-                        self.step1_getapp(ctx, ui);
-                        ui.add_space(14.0);
-                        let next = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("✔  I have the app — next")
-                                    .color(egui::Color32::WHITE)
-                                    .size(15.0),
-                            )
-                            .fill(BRAND)
-                            .min_size(egui::vec2(220.0, 36.0))
-                            .rounding(10.0),
-                        );
-                        if next.clicked() {
-                            self.show_step2 = true;
-                        }
-                    }
+                    self.show_connect(ctx, ui);
                 });
             });
         });
@@ -764,18 +719,6 @@ fn best_lan_ip() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
     Some(socket.local_addr().ok()?.ip().to_string())
-}
-
-fn step_header(ui: &mut egui::Ui, step: &str, title: &str) {
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new(step.to_uppercase()).color(BRAND).strong().size(15.0));
-    ui.label(egui::RichText::new(title).strong().size(26.0));
-    ui.add_space(6.0);
-}
-
-fn scan_subheader(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).strong().size(15.0));
-    ui.add_space(2.0);
 }
 
 fn style_navbar(ui: &mut egui::Ui, dark: bool) {
