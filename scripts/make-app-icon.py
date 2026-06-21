@@ -4,13 +4,14 @@
 Renders at 4x and downsamples with LANCZOS for smooth edges. Output:
   crates/host-windows/assets/app-icon.png  (256x256 RGBA)
 
+The drawing lives in `render_icon()` so other generators (e.g. the iOS asset
+catalog — see make-ios-icons.py) can reuse the exact same artwork at any size.
+
 Run: python scripts/make-app-icon.py
 """
 import os
 from PIL import Image, ImageDraw
 
-K = 4                      # supersample factor
-S = 256 * K
 OUT = os.path.join(
     os.path.dirname(__file__),
     "..", "crates", "host-windows", "assets", "app-icon.png",
@@ -33,51 +34,66 @@ LAPTOP   = (203, 213, 225, 255)  # slate-300 — screen bezel
 DECK     = (148, 163, 184, 255)  # slate-400 — keyboard deck (a touch darker for depth)
 EDGE     = (226, 232, 240, 255)  # slate-200 — hinge highlight
 
-img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-d = ImageDraw.Draw(img)
+
+def render_icon(px: int, opaque: bool = False) -> Image.Image:
+    """Render the icon at `px`×`px`, supersampled 4x then LANCZOS-downsampled.
+
+    `opaque=True` floods the full square with SLATE900 (no transparent corners) —
+    required for iOS app icons, which must not carry an alpha channel. `False`
+    keeps the rounded-square on a transparent canvas (for in-app logos / Windows).
+    """
+    K = 4
+    S = px * K
+    canvas = SLATE900 if opaque else (0, 0, 0, 0)
+    img = Image.new("RGBA", (S, S), canvas)
+    d = ImageDraw.Draw(img)
+
+    # All geometry is authored in a 256-unit space and scaled up by `scale`.
+    scale = S / 256.0
+
+    def rr(b, r, f):
+        d.rounded_rectangle([v * scale for v in b], radius=r * scale, fill=f)
+
+    def el(b, f):
+        d.ellipse([v * scale for v in b], fill=f)
+
+    def poly(pts, f):
+        d.polygon([(x * scale, y * scale) for x, y in pts], fill=f)
+
+    def ln(p, f, w):
+        d.line([(x * scale, y * scale) for x, y in p], fill=f, width=int(w * scale))
+
+    # Rounded-square dark background.
+    rr([8, 8, 248, 248], 52, SLATE900)
+
+    # Laptop — screen lid (bezel + display), then the keyboard deck below.
+    rr([62, 50, 194, 144], 12, LAPTOP)
+    rr([72, 60, 184, 134], 7, SCREEN)
+    rr([84, 72, 148, 80], 4, ORANGE)        # orange accent line on the display
+    rr([84, 90, 168, 96], 3, SLATE500)
+    rr([84, 104, 134, 110], 3, SLATE500)
+    poly([(46, 144), (210, 144), (232, 176), (24, 176)], DECK)  # deck (perspective)
+    ln([(62, 144), (194, 144)], EDGE, 2)      # hinge highlight
+    rr([116, 148, 140, 154], 2, SLATE600)     # trackpad notch
+
+    # Phone — centred in front of the laptop, with a same-as-background "gap ring"
+    # so it reads as a separate object sitting on top.
+    rr([100, 112, 156, 216], 20, SLATE900)    # gap ring
+    rr([104, 116, 152, 212], 14, SLATE800)    # body
+    rr([110, 124, 146, 202], 9, ORANGE)       # orange screen
+    # "Text" dash lines on the screen, mirroring the laptop's.
+    rr([116, 133, 140, 139], 3, PHONE_LN)
+    rr([116, 146, 135, 152], 3, PHONE_LN)
+    rr([116, 159, 129, 165], 3, PHONE_LN)
+    el([126, 118, 130, 122], SLATE500)        # camera dot
+    rr([120, 205, 136, 208], 1, SLATE600)     # home indicator
+
+    out = img.resize((px, px), Image.LANCZOS)
+    if opaque:
+        out = out.convert("RGB")
+    return out
 
 
-def rr(b, r, f):
-    d.rounded_rectangle([v * K for v in b], radius=r * K, fill=f)
-
-
-def el(b, f):
-    d.ellipse([v * K for v in b], fill=f)
-
-
-def poly(pts, f):
-    d.polygon([(x * K, y * K) for x, y in pts], fill=f)
-
-
-def ln(p, f, w):
-    d.line([(x * K, y * K) for x, y in p], fill=f, width=w * K)
-
-
-# Rounded-square dark background.
-rr([8, 8, 248, 248], 52, SLATE900)
-
-# Laptop — screen lid (bezel + display), then the keyboard deck below.
-rr([62, 50, 194, 144], 12, LAPTOP)
-rr([72, 60, 184, 134], 7, SCREEN)
-rr([84, 72, 148, 80], 4, ORANGE)        # orange accent line on the display
-rr([84, 90, 168, 96], 3, SLATE500)
-rr([84, 104, 134, 110], 3, SLATE500)
-poly([(46, 144), (210, 144), (232, 176), (24, 176)], DECK)  # deck (perspective)
-ln([(62, 144), (194, 144)], EDGE, 2)      # hinge highlight
-rr([116, 148, 140, 154], 2, SLATE600)     # trackpad notch
-
-# Phone — centred in front of the laptop, with a same-as-background "gap ring"
-# so it reads as a separate object sitting on top.
-rr([100, 112, 156, 216], 20, SLATE900)    # gap ring
-rr([104, 116, 152, 212], 14, SLATE800)    # body
-rr([110, 124, 146, 202], 9, ORANGE)       # orange screen
-# "Text" dash lines on the screen, mirroring the laptop's.
-rr([116, 133, 140, 139], 3, PHONE_LN)
-rr([116, 146, 135, 152], 3, PHONE_LN)
-rr([116, 159, 129, 165], 3, PHONE_LN)
-el([126, 118, 130, 122], SLATE500)        # camera dot
-rr([120, 205, 136, 208], 1, SLATE600)     # home indicator
-
-img = img.resize((256, 256), Image.LANCZOS)
-img.save(os.path.abspath(OUT))
-print("wrote", os.path.abspath(OUT))
+if __name__ == "__main__":
+    render_icon(256).save(os.path.abspath(OUT))
+    print("wrote", os.path.abspath(OUT))

@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Home screen: scan to connect, or pick a saved host.
+/// Home screen: scan to connect, or pick a saved host. A centred hero (logo +
+/// primary action) mirrors the Android client, with saved hosts as cards below.
 /// `onPrepare(addr, pin)` → show mode picker.
 /// `onConnect(addr, mode, pin)` → connect directly (saved host with remembered mode).
 struct ConnectView: View {
@@ -20,56 +21,30 @@ struct ConnectView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                Text("Universal Screens").font(.largeTitle).bold()
-            }
-
-            Section {
-                Button(action: { showScanner = true }) {
-                    Label("Scan to connect", systemImage: "qrcode.viewfinder")
-                        .font(.title3)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .listRowInsets(.init())
-                .listRowBackground(Color.clear)
-
-                Text("Point at the host's QR code — it joins this PC's Wi-Fi and connects.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-
-            if !visible.isEmpty {
-                Section("Saved hosts") {
-                    ForEach(visible) { host in savedRow(host) }
-                }
-            }
-            if saved.contains(where: \.hidden) {
-                Button(showHidden ? "Hide hidden" : "Show hidden") { showHidden.toggle() }
-            }
-
-            Section {
-                Button(showAdvanced ? "Advanced ▾" : "Advanced ▸") { showAdvanced.toggle() }
-                    .foregroundStyle(.secondary)
-                if showAdvanced {
-                    TextField("Host (ip:port)", text: $addr)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                    TextField("PIN (from the host)", text: $pin)
-                        .keyboardType(.numberPad)
-                        .onChange(of: pin) { _, v in pin = String(v.filter(\.isNumber).prefix(4)) }
-                    Button("Connect") {
-                        onPrepare(addr, Int(pin) ?? 0)
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 24) {
+                    hero
+                    if !visible.isEmpty { savedHosts }
+                    if saved.contains(where: \.hidden) {
+                        Button(showHidden ? "Hide hidden hosts" : "Show hidden hosts") {
+                            withAnimation { showHidden.toggle() }
+                        }
+                        .font(.footnote)
                     }
-                    .disabled(addr.isEmpty)
+                    advanced
+                    if !status.isEmpty {
+                        Text(status).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
-            }
-
-            if !status.isEmpty {
-                Text(status).foregroundStyle(.secondary)
+                .padding(24)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+                // Centre the hero when it fits; grow + scroll when hosts overflow.
+                .frame(minHeight: geo.size.height, alignment: .center)
             }
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .onAppear { saved = ConnectionStore.load() }
         .sheet(isPresented: $showScanner) {
             QRScannerView { text in
@@ -85,44 +60,143 @@ struct ConnectView: View {
         }
     }
 
+    // MARK: - Hero
+
+    private var hero: some View {
+        VStack(spacing: 16) {
+            Button { showScanner = true } label: {
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 116, height: 116)
+                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                    .accessibilityLabel("Scan to connect")
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+
+            Text("Universal Screens")
+                .font(.largeTitle.bold())
+
+            Button { showScanner = true } label: {
+                Label("Scan to connect", systemImage: "qrcode.viewfinder")
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+
+            Text("Point at the host's QR code — it joins this PC's Wi-Fi and connects.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    // MARK: - Saved hosts
+
+    private var savedHosts: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("SAVED HOSTS")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            VStack(spacing: 10) {
+                ForEach(visible) { host in savedRow(host) }
+            }
+        }
+    }
+
     private func savedRow(_ host: SavedConnection) -> some View {
         Button {
-            let m = Mode(rawValue: host.mode)
-            if let m {
+            if let m = Mode(rawValue: host.mode) {
                 onConnect(host.addr, m, host.pin)
             } else {
                 onPrepare(host.addr, host.pin)
             }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: deviceSymbol(host.os)).font(.title2).frame(width: 32)
-                VStack(alignment: .leading) {
+            HStack(spacing: 14) {
+                Image(systemName: deviceSymbol(host.os))
+                    .font(.title2)
+                    .foregroundStyle(Color.brandOrange)
+                    .frame(width: 44, height: 44)
+                    .background(Color.brandOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
                     Text(host.hostname.isEmpty ? host.addr : host.hostname)
-                    let sub = host.mode.isEmpty ? host.addr : "\(host.addr)  ·  \(modeLabel(host.mode))"
-                    Text(sub).font(.caption).foregroundStyle(.secondary)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text(host.mode.isEmpty ? host.addr : "\(host.addr)  ·  \(modeLabel(host.mode))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Menu {
+                    Button {
+                        ConnectionStore.setHidden(addr: host.addr, !host.hidden)
+                        saved = ConnectionStore.load()
+                    } label: {
+                        Label(host.hidden ? "Unhide" : "Hide", systemImage: host.hidden ? "eye" : "eye.slash")
+                    }
+                    Button(role: .destructive) {
+                        ConnectionStore.delete(addr: host.addr)
+                        saved = ConnectionStore.load()
+                    } label: { Label("Delete", systemImage: "trash") }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
                 }
             }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                ConnectionStore.delete(addr: host.addr)
-                saved = ConnectionStore.load()
-            } label: { Label("Delete", systemImage: "trash") }
-            Button {
-                ConnectionStore.setHidden(addr: host.addr, !host.hidden)
-                saved = ConnectionStore.load()
-            } label: { Label(host.hidden ? "Unhide" : "Hide", systemImage: "eye.slash") }
-        }
+        .buttonStyle(.plain)
     }
-}
 
-private func modeLabel(_ raw: String) -> String {
-    switch Mode(rawValue: raw) {
-    case .clicker:      return "Clicker"
-    case .viewer:       return "Mirror"
-    case .control:      return "Remote control"
-    case .trackpad:     return "Trackpad"
-    case .secondScreen: return "Second screen"
-    case nil:           return raw
+    // MARK: - Advanced (manual entry)
+
+    private var advanced: some View {
+        VStack(spacing: 12) {
+            Button {
+                withAnimation { showAdvanced.toggle() }
+            } label: {
+                HStack {
+                    Text("Advanced")
+                    Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if showAdvanced {
+                VStack(spacing: 12) {
+                    TextField("Host (ip:port)", text: $addr)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("PIN (from the host)", text: $pin)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: pin) { _, v in pin = String(v.filter(\.isNumber).prefix(4)) }
+                    Button {
+                        onPrepare(addr, Int(pin) ?? 0)
+                    } label: {
+                        Text("Connect").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(addr.isEmpty)
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
     }
 }

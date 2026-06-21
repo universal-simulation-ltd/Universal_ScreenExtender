@@ -16,7 +16,8 @@ struct TrackpadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            ConnectedHeader(mode: .trackpad, onSwitchMode: onSwitchMode, onDisconnect: onDisconnect)
+            Divider()
             TrackpadSurface(session: session, sensitivity: sensitivity)
                 .allowsHitTesting(!locked)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -36,15 +37,6 @@ struct TrackpadView: View {
                 }
             controls
         }
-    }
-
-    private var header: some View {
-        HStack {
-            Button("Trackpad") { onSwitchMode() }.font(.headline)
-            Spacer()
-            Button("Disconnect", action: onDisconnect)
-        }
-        .padding(8)
     }
 
     private var controls: some View {

@@ -98,31 +98,18 @@ struct ContentView: View {
     }
 
     @ViewBuilder private func connectedView(_ live: ExtenderSession) -> some View {
-        let streaming = mode == .viewer || mode == .control || mode == .secondScreen
-        VStack(spacing: 0) {
-            if !streaming {
-                EmptyView()
-            }
-            switch mode {
-            case .clicker:
-                ClickerView(
-                    session: live, addr: currentAddr,
-                    onDisconnect: disconnect,
-                    onSwitchMode: { live.close(); session = nil; pending = (currentAddr, currentPin) }
-                )
-            case .trackpad:
-                TrackpadView(
-                    session: live,
-                    onDisconnect: disconnect,
-                    onSwitchMode: { live.close(); session = nil; pending = (currentAddr, currentPin) }
-                )
-            case .viewer:
-                StreamView(session: live, addr: currentAddr, forwardInput: false, onDisconnect: disconnect)
-            case .control:
-                StreamView(session: live, addr: currentAddr, forwardInput: true, onDisconnect: disconnect)
-            case .secondScreen:
-                StreamView(session: live, addr: currentAddr, forwardInput: false, onDisconnect: disconnect)
-            }
+        let repick = { live.close(); session = nil; pending = (currentAddr, currentPin) }
+        switch mode {
+        case .clicker:
+            ClickerView(session: live, addr: currentAddr, onDisconnect: disconnect, onSwitchMode: repick)
+        case .trackpad:
+            TrackpadView(session: live, onDisconnect: disconnect, onSwitchMode: repick)
+        case .viewer:
+            StreamView(session: live, addr: currentAddr, forwardInput: false, onDisconnect: disconnect)
+        case .control:
+            StreamView(session: live, addr: currentAddr, forwardInput: true, onDisconnect: disconnect)
+        case .secondScreen:
+            StreamView(session: live, addr: currentAddr, forwardInput: false, onDisconnect: disconnect)
         }
     }
 
@@ -177,49 +164,73 @@ struct ModePickerScreen: View {
 
     @State private var rememberChoice = false
 
+    private let modes: [Mode] = [.clicker, .viewer, .control, .trackpad, .secondScreen]
+
     var body: some View {
-        List {
-            Section {
-                Text("Universal Screens").font(.largeTitle).bold()
-                Text("Host: \(addr)").foregroundStyle(.secondary)
-                Text("How do you want to use it?")
-            }
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 20) {
+                    VStack(spacing: 4) {
+                        Text("How do you want to use it?")
+                            .font(.title2.bold())
+                            .multilineTextAlignment(.center)
+                        Text(addr)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
 
-            Section {
-                ModeOption("Clicker",       subtitle: "Presentation remote — next/previous, blank, slide previews")  { onPick(.clicker,      rememberChoice) }
-                ModeOption("Mirror",        subtitle: "Watch the host's screen (view only)")                         { onPick(.viewer,       rememberChoice) }
-                ModeOption("Remote control",subtitle: "See the screen and control it (mouse + keys)")                { onPick(.control,      rememberChoice) }
-                ModeOption("Trackpad",      subtitle: "Use the phone as a touchpad — move, tap, scroll")             { onPick(.trackpad,     rememberChoice) }
-                ModeOption("Second screen", subtitle: "Use the phone as an extra display (needs a virtual-display driver on the PC)") { onPick(.secondScreen, rememberChoice) }
-            }
+                    VStack(spacing: 10) {
+                        ForEach(modes, id: \.self) { mode in
+                            ModeOption(mode) { onPick(mode, rememberChoice) }
+                        }
+                    }
 
-            Section {
-                Toggle("Remember next time?", isOn: $rememberChoice)
-            }
+                    Toggle("Remember next time?", isOn: $rememberChoice)
+                        .padding(.horizontal, 4)
 
-            Section {
-                Button("Back", action: onBack)
+                    Button("Back", action: onBack)
+                        .font(.subheadline)
+                }
+                .padding(24)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geo.size.height, alignment: .center)
             }
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 }
 
 private struct ModeOption: View {
-    let title: String
-    let subtitle: String
+    let mode: Mode
     let action: () -> Void
 
-    init(_ title: String, subtitle: String, action: @escaping () -> Void) {
-        self.title = title; self.subtitle = subtitle; self.action = action
+    init(_ mode: Mode, action: @escaping () -> Void) {
+        self.mode = mode; self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                Image(systemName: mode.systemImage)
+                    .font(.title2)
+                    .foregroundStyle(Color.brandOrange)
+                    .frame(width: 44, height: 44)
+                    .background(Color.brandOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.label).font(.headline).foregroundStyle(.primary)
+                    Text(mode.subtitle).font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -228,11 +239,16 @@ private struct ModeOption: View {
 struct ConnectingScreen: View {
     let addr: String
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
+            Image("AppLogo")
+                .resizable().scaledToFit()
+                .frame(width: 88, height: 88)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             ProgressView()
-            Text("Connecting…").font(.title3)
+            Text("Connecting…").font(.title3.weight(.semibold))
             if !addr.isEmpty { Text(addr).font(.caption).foregroundStyle(.secondary) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 }

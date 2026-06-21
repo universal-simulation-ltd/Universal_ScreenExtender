@@ -28,10 +28,11 @@ struct ClickerView: View {
     @State private var locked = false
 
     var body: some View {
-        ScrollView {
+        VStack(spacing: 0) {
+            ConnectedHeader(mode: .clicker, onSwitchMode: onSwitchMode, onDisconnect: onDisconnect)
+            Divider()
+            ScrollView {
             VStack(spacing: 16) {
-                header
-
                 previewImage(current, height: 200)
                     .overlay(alignment: .center) {
                         if current == nil { Text("Waiting for slide preview…").foregroundStyle(.secondary) }
@@ -50,6 +51,7 @@ struct ClickerView: View {
                 if showMore { moreOptions.disabled(locked) }
             }
             .padding(24)
+            }
         }
         .onAppear {
             var sink = ExtenderSession.Sink()
@@ -63,15 +65,6 @@ struct ClickerView: View {
             sink.onHostInfo = { os, name in ConnectionStore.setIdentity(addr: addr, os: os, hostname: name) }
             session.startPump(sink)
             session.listWindows()
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            Button("Clicker") { onSwitchMode?() }.font(.headline)
-                .disabled(onSwitchMode == nil)
-            Spacer()
-            Button("Disconnect", action: onDisconnect)
         }
     }
 

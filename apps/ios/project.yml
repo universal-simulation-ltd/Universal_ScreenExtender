@@ -22,6 +22,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.universalsim.screenextender
         DEVELOPMENT_TEAM: "ZH9C5TS86A"
         CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SWIFT_OBJC_BRIDGING_HEADER: ScreenExtender/ScreenExtender-Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../../crates/mobile-ffi/include
         SWIFT_VERSION: "5.0"
@@ -30,7 +32,17 @@ targets:
       path: ScreenExtender/Info.plist
       properties:
         CFBundleDisplayName: Universal Screens
+        # An (empty) launch screen makes iOS render at native resolution; without
+        # it the app is letterboxed with black bars instead of filling the phone.
+        UILaunchScreen: {}
         NSLocalNetworkUsageDescription: "Universal Screens needs local network access to connect to a presentation host on the same Wi-Fi."
         NSCameraUsageDescription: "Universal Screens uses the camera to scan the host's QR connect code."
         NSBonjourServices:
           - _extender._tcp
+        # Custom scheme for the combined connect payload (matches the Android
+        # client's `unisimscreens://` intent filter). A scanned QR / deep link is
+        # handled by ContentView.onOpenURL → parseConnectPayload.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.universalsim.screenextender
+            CFBundleURLSchemes:
+              - unisimscreens
