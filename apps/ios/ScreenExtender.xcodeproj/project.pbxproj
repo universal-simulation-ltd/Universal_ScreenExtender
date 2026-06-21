@@ -8,10 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		0D65B0868127697F33DBDD3F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AC50A50AEA18D66558B793 /* ContentView.swift */; };
+		3ED1634971B6DCBB5DA3AD3C /* TrackpadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAC1B91E7180AE554A02446 /* TrackpadView.swift */; };
 		3FA888C8DE891836DFA9D0E0 /* StreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B0294A9C457DA3B4C8C21B2 /* StreamView.swift */; };
 		5BFDD788B2516A371DC5965F /* HidKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4353D077316F6FF60AD9ACD /* HidKeys.swift */; };
 		6E5FD101AF8C8C5775A1F310 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9694C23DA25CA1175158EB8 /* ConnectView.swift */; };
 		71E8B4D99144C7B4728ECF4E /* ExtenderMobile.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F1963C701C29D05C9482B08 /* ExtenderMobile.xcframework */; };
+		73005F363B4465282C8BA3C7 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D592CBC691E2CD55DD3D42F0 /* QRScannerView.swift */; };
 		79072F52C5AB085B7D794250 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CD875701149E094733F7FEA /* VideoDecoder.swift */; };
 		AA5229D7BA9DEB31BD895DCB /* ClickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5142614823D65AFD5998F5E4 /* ClickerView.swift */; };
 		B8B6EF6783DDD2BC8421A914 /* ScreenExtenderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60256A7FA4730057F55D6DA5 /* ScreenExtenderApp.swift */; };
@@ -25,13 +27,15 @@
 		4CD875701149E094733F7FEA /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
 		5142614823D65AFD5998F5E4 /* ClickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickerView.swift; sourceTree = "<group>"; };
 		60256A7FA4730057F55D6DA5 /* ScreenExtenderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenExtenderApp.swift; sourceTree = "<group>"; };
-		62F3EBF21BA1262B132748DD /* ScreenExtender.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenExtender.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		62F3EBF21BA1262B132748DD /* ScreenExtender.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ScreenExtender.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		88BAE13F8414308703A542A5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8B0294A9C457DA3B4C8C21B2 /* StreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamView.swift; sourceTree = "<group>"; };
 		B9B298B73D48FD9A0DDFAE02 /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		D4353D077316F6FF60AD9ACD /* HidKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HidKeys.swift; sourceTree = "<group>"; };
+		D592CBC691E2CD55DD3D42F0 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		D9694C23DA25CA1175158EB8 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		D9F1AE010ED690FC1609CD92 /* ExtenderSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtenderSession.swift; sourceTree = "<group>"; };
+		EBAC1B91E7180AE554A02446 /* TrackpadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,8 +76,10 @@
 				D9F1AE010ED690FC1609CD92 /* ExtenderSession.swift */,
 				D4353D077316F6FF60AD9ACD /* HidKeys.swift */,
 				88BAE13F8414308703A542A5 /* Info.plist */,
+				D592CBC691E2CD55DD3D42F0 /* QRScannerView.swift */,
 				60256A7FA4730057F55D6DA5 /* ScreenExtenderApp.swift */,
 				8B0294A9C457DA3B4C8C21B2 /* StreamView.swift */,
+				EBAC1B91E7180AE554A02446 /* TrackpadView.swift */,
 				4CD875701149E094733F7FEA /* VideoDecoder.swift */,
 			);
 			path = ScreenExtender;
@@ -117,6 +123,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = 8C0475951F4B6F874AB74377 /* Build configuration list for PBXProject "ScreenExtender" */;
 			developmentRegion = en;
@@ -148,8 +156,10 @@
 				0D65B0868127697F33DBDD3F /* ContentView.swift in Sources */,
 				C83EFE7F147BEE1300E7CC54 /* ExtenderSession.swift in Sources */,
 				5BFDD788B2516A371DC5965F /* HidKeys.swift in Sources */,
+				73005F363B4465282C8BA3C7 /* QRScannerView.swift in Sources */,
 				B8B6EF6783DDD2BC8421A914 /* ScreenExtenderApp.swift in Sources */,
 				3FA888C8DE891836DFA9D0E0 /* StreamView.swift in Sources */,
+				3ED1634971B6DCBB5DA3AD3C /* TrackpadView.swift in Sources */,
 				79072F52C5AB085B7D794250 /* VideoDecoder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -281,7 +291,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = ZH9C5TS86A;
 				ENABLE_PREVIEWS = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -307,7 +316,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = ZH9C5TS86A;
 				ENABLE_PREVIEWS = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
