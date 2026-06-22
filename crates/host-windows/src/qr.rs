@@ -1,11 +1,7 @@
-//! The branded connection QR for the host window: a QR code at error-correction
+//! Branded connection QR for the host window: a QR code at error-correction
 //! level `H` (matching the Universal_QR app, which pins `ecLevel: 'H'` so a centre
-//! logo never breaks scanning) with the UNI·SIM mark composited in the middle.
-//!
-//! The Universal_QR app itself is a browser tool (the `qr-code-styling` canvas
-//! library), so it can't run inside this Rust window — this reproduces its key
-//! branded result: black-on-white modules (most reliable to scan) + the centre
-//! logo.
+//! logo never breaks scanning) with the Universal Screens app icon composited in
+//! the middle.
 
 use eframe::egui;
 use image::{imageops, Rgba, RgbaImage};
@@ -18,18 +14,10 @@ const LOGO_PNG: &[u8] = include_bytes!("../assets/unisim-icon.png");
 /// product logo.
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/app-icon.png");
 
-/// Build a black-on-white QR of `text` with the UNI·SIM logo centred, as an
-/// `egui::ColorImage`. `None` if the text won't fit in a QR code.
-///
-/// Used for **Step 1** (the "get the app" suite-page QR) — a UNI·SIM-branded
-/// link a phone camera can open.
-pub fn branded_qr(text: &str) -> Option<egui::ColorImage> {
-    branded_qr_with(text, LOGO_PNG)
-}
-
-/// Like [`branded_qr`] but with the **Universal Screens app icon** centred
-/// instead of the generic UNI·SIM mark. Used for **Step 2** (the in-app connect
-/// QRs) so the code reads as "this is for the Universal Screens app".
+/// Build a black-on-white QR of `text` with the Universal Screens app icon centred,
+/// as an `egui::ColorImage`. Scanned *in the app* it deep-links to connect; scanned
+/// with a plain camera it lands on the friendly `/screens/connect` page.
+/// `None` if the text won't fit in a QR code.
 pub fn branded_qr_app(text: &str) -> Option<egui::ColorImage> {
     branded_qr_with(text, APP_ICON_PNG)
 }
@@ -146,29 +134,6 @@ fn overlay_logo(img: &mut RgbaImage, dim: u32, logo_png: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn branded_qr_builds_and_composites_the_logo() {
-        let img = branded_qr("10.0.0.5:9100").expect("QR should build");
-        // Square and a sensible pixel size.
-        assert_eq!(img.size[0], img.size[1]);
-        assert!(img.size[0] > 100);
-
-        // The embedded (coloured) logo should land in the centre: scan the middle
-        // for a pixel that is neither pure white nor pure black, proving the
-        // overlay ran (a logo-less QR centre would be only black/white).
-        let w = img.size[0];
-        let lo = w * 2 / 5;
-        let hi = w * 3 / 5;
-        let coloured = (lo..hi).any(|y| {
-            (lo..hi).any(|x| {
-                let p = img.pixels[y * w + x];
-                let (r, g, b) = (p.r(), p.g(), p.b());
-                !(r == 255 && g == 255 && b == 255) && !(r == 0 && g == 0 && b == 0)
-            })
-        });
-        assert!(coloured, "expected the UNI·SIM logo in the centre");
-    }
 
     #[test]
     fn branded_qr_app_builds_with_app_icon_centre() {

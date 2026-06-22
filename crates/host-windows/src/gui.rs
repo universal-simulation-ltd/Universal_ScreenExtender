@@ -97,8 +97,6 @@ struct HostApp {
     status: Arc<Mutex<String>>,
     recent: Arc<Mutex<Vec<RecentConn>>>,
     address: Option<String>,
-    /// The "get the app" QR (the suite page URL); built once.
-    applink_qr: Option<egui::TextureHandle>,
     /// The UNI·SIM mark, lazily uploaded for the navbar changelog icon + QR.
     logo: Option<egui::TextureHandle>,
     /// The Universal Screens app icon, lazily uploaded for the navbar product logo.
@@ -111,8 +109,6 @@ struct HostApp {
     combined_qr: Option<egui::TextureHandle>,
     /// Reveal the Wi-Fi password (toggled by clicking the masked value).
     wifi_show_password: bool,
-    /// Wizard position: false = step 1 (Wi-Fi), true = step 2 (connect phone).
-    show_step2: bool,
     /// Reveal the pairing PIN (toggled by clicking it); it's in the QR regardless.
     show_pin: bool,
     /// Whether an inbound firewall rule for the port exists (checked on start);
@@ -144,14 +140,12 @@ impl HostApp {
             status: Arc::new(Mutex::new("Not started".to_owned())),
             recent: Arc::new(Mutex::new(recent)),
             address: None,
-            applink_qr: None,
             logo: None,
             app_logo: None,
             wifi: crate::wifi::current_wifi(),
             wifi_qr: None,
             combined_qr: None,
             wifi_show_password: false,
-            show_step2: false,
             show_pin: false,
             firewall_ok: None,
         }
@@ -230,41 +224,11 @@ impl HostApp {
         self.combined_qr = None;
     }
 
-    /// Step 1 — get the app onto the phone: a QR of the suite page. The phone's
-    /// *camera* opens it; with the app installed it deep-links straight in (Android
-    /// App Link / iOS Universal Link), otherwise it lands on the download page.
-    /// A plain https URL — carries no secrets, and any camera can open it.
-    fn step1_getapp(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        step_header(ui, "Step 1", "Get the app");
-        scan_subheader(ui, "Scan with your mobile phone camera");
-        if self.applink_qr.is_none() {
-            // Step 1 keeps the UNI·SIM mark — it's a suite-page link any camera opens.
-            if let Some(image) = crate::qr::branded_qr(OPENSOURCE_URL) {
-                self.applink_qr =
-                    Some(ctx.load_texture("applink_qr", image, egui::TextureOptions::LINEAR));
-            }
-        }
-        if let Some(qr) = &self.applink_qr {
-            ui.add(
-                egui::Image::from_texture(egui::load::SizedTexture::new(
-                    qr.id(),
-                    egui::vec2(200.0, 200.0),
-                ))
-                .rounding(14.0),
-            );
-        }
-        ui.small("Point your phone's camera here — it opens Universal Screens, or the download page if you don't have it yet.");
-        ui.add_space(2.0);
-        // Once the app is on the phone, the user continues on THIS PC — point them
-        // at the orange button below so the QR scan doesn't feel like a dead end.
-        ui.small("Got it on your phone? Tap “I have the app” below to continue here.");
-    }
-
-    /// Step 2 — one scan *in the app* to join this PC's Wi-Fi and connect: the
+    /// One scan *in the app* to join this PC's Wi-Fi and connect: the
     /// combined QR (network + host + PIN), the network name, a reveal-on-click
     /// password, and a manual address/PIN fallback for phones already on the network.
-    fn step2_connect(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        step_header(ui, "Step 2", "Scan to connect");
+    fn show_connect(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        step_header(ui, "Universal Screens", "Scan to connect");
         scan_subheader(ui, "Scan directly in the Universal Screens App");
 
         if let Some(wifi) = &self.wifi {
@@ -339,7 +303,32 @@ impl HostApp {
                 ui.label("Password: (open network)");
             }
         } else {
-            ui.small("This PC isn't on Wi-Fi — put your phone on the same network, then use the details below.");
+            // No Wi-Fi detected (Ethernet or hotspot). Still show the connect QR
+            // so the phone can scan it — it just won't auto-join a network first.
+            if self.running {
+                if self.combined_qr.is_none() {
+                    if let Some(addr) = &self.address {
+                        let payload = connect_url(addr, self.pin, None);
+                        if let Some(image) = crate::qr::branded_qr_app(&payload) {
+                            self.combined_qr = Some(
+                                ctx.load_texture("combined_qr", image, egui::TextureOptions::LINEAR),
+                            );
+                        }
+                    }
+                }
+                if let Some(qr) = &self.combined_qr {
+                    ui.add(
+                        egui::Image::from_texture(egui::load::SizedTexture::new(
+                            qr.id(),
+                            egui::vec2(200.0, 200.0),
+                        ))
+                        .rounding(14.0),
+                    );
+                }
+                ui.small("In the app, tap Scan and point it here — make sure your phone is already on the same network.");
+            } else {
+                ui.small("This PC isn't on Wi-Fi — put your phone on the same network, then use the address in More details.");
+            }
         }
 
         // Everything secondary lives here: the firewall fix, the manual
@@ -674,30 +663,7 @@ impl eframe::App for HostApp {
                 });
 
                 ui.vertical_centered(|ui| {
-                    if self.show_step2 {
-                        self.step2_connect(ctx, ui);
-                        ui.add_space(8.0);
-                        if ui.button("Back").clicked() {
-                            self.show_step2 = false;
-                        }
-                    } else {
-                        self.step1_getapp(ctx, ui);
-                        ui.add_space(14.0);
-                        // Confirm Step 1 → reveal Step 2.
-                        let next = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("✔  I have the app — next")
-                                    .color(egui::Color32::WHITE)
-                                    .size(15.0),
-                            )
-                            .fill(BRAND)
-                            .min_size(egui::vec2(220.0, 36.0))
-                            .rounding(10.0),
-                        );
-                        if next.clicked() {
-                            self.show_step2 = true;
-                        }
-                    }
+                    self.show_connect(ctx, ui);
                 });
             });
         });
