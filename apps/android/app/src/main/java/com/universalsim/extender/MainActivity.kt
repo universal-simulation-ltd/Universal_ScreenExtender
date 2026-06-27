@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -58,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -269,39 +271,72 @@ fun AppRoot(deepLink: String? = null, onDeepLinkHandled: () -> Unit = {}) {
             val streaming =
                 mode == Mode.VIEWER || mode == Mode.FULL_CONTROL || mode == Mode.SECOND_SCREEN
             var chrome by remember(live) { mutableStateOf(true) }
-            Column(modifier = Modifier.fillMaxSize()) {
-                if (!streaming || chrome) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val modeName = when (mode) {
-                            Mode.CLICKER -> "Clicker"
-                            Mode.VIEWER -> "Mirror"
-                            Mode.FULL_CONTROL -> "Remote control"
-                            Mode.TRACKPAD -> "Trackpad"
-                            Mode.SECOND_SCREEN -> "Second screen"
+
+            // Top bar (current mode + Disconnect). For streaming modes it floats as
+            // a translucent gradient overlay over the video (matching the iPhone /
+            // web viewer) so the picture keeps the full height; for the control
+            // modes (Clicker / Trackpad) it sits above the content in normal flow.
+            val topBar: @Composable (Boolean) -> Unit = { overlay ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (overlay)
+                                Modifier.background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                                    ),
+                                )
+                            else Modifier,
+                        )
+                        .statusBarsPadding()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val modeName = when (mode) {
+                        Mode.CLICKER -> "Clicker"
+                        Mode.VIEWER -> "Mirror"
+                        Mode.FULL_CONTROL -> "Remote control"
+                        Mode.TRACKPAD -> "Trackpad"
+                        Mode.SECOND_SCREEN -> "Second screen"
+                    }
+                    // Tap the mode to go back and pick a different one for this host.
+                    Button(onClick = {
+                        live.close()
+                        session = null
+                        pending = currentAddr to currentPin
+                    }) { Text(modeName) }
+                    Button(onClick = {
+                        live.close()
+                        session = null
+                    }) { Text("Disconnect") }
+                }
+            }
+
+            if (streaming) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when (mode) {
+                        Mode.VIEWER, Mode.SECOND_SCREEN ->
+                            StreamScreen(live, currentAddr, forwardInput = false) { chrome = !chrome }
+                        Mode.FULL_CONTROL ->
+                            StreamScreen(live, currentAddr, forwardInput = true) { chrome = !chrome }
+                        else -> {}
+                    }
+                    if (chrome) {
+                        Box(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                            topBar(true)
                         }
-                        // Tap the mode to go back and pick a different one for this host.
-                        Button(onClick = {
-                            live.close()
-                            session = null
-                            pending = currentAddr to currentPin
-                        }) { Text(modeName) }
-                        Button(onClick = {
-                            live.close()
-                            session = null
-                        }) { Text("Disconnect") }
                     }
                 }
-                when (mode) {
-                    Mode.CLICKER -> ClickerScreen(live, currentAddr)
-                    Mode.TRACKPAD -> TrackpadScreen(live)
-                    Mode.VIEWER, Mode.SECOND_SCREEN ->
-                        StreamScreen(live, currentAddr, forwardInput = false) { chrome = !chrome }
-                    Mode.FULL_CONTROL ->
-                        StreamScreen(live, currentAddr, forwardInput = true) { chrome = !chrome }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    topBar(false)
+                    when (mode) {
+                        Mode.CLICKER -> ClickerScreen(live, currentAddr)
+                        Mode.TRACKPAD -> TrackpadScreen(live)
+                        else -> {}
+                    }
                 }
             }
         }

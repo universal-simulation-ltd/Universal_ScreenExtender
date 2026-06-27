@@ -4,11 +4,20 @@ Newest entry first. Each dated `## Update` overrides anything older that conflic
 A `SessionStart` hook injects the top ~150 lines into new sessions, so keep the
 newest entry at the top.
 
-## Update — 2026-06-27 (Web viewer: transparent overlay top bar)
+## Update — 2026-06-27 (Viewer transparent overlay top bar — web + Android)
 
-Backlog sweep. Did the one contained, verifiable Screens item; the rest need
-on-device hardware testing and were intentionally left (see below).
+Backlog sweep. Web + Android viewers now match the iPhone's transparent overlay;
+the input/host-display items still need on-device hardware testing (see below).
 
+- **Android viewer top bar is now a translucent overlay too** (`MainActivity.kt`,
+  `AppRoot`). The streaming modes (Mirror / Remote control / Second screen) were a
+  `Column { opaque bar; StreamScreen }` — the bar pushed the video down and a tap
+  removed it entirely. They're now a `Box { StreamScreen(fillMaxSize); overlay bar
+  aligned TopCenter }` with a `Brush.verticalGradient(Black 55% → Transparent)` +
+  `statusBarsPadding()`, so the video keeps full height and the bar floats over it
+  (tap still toggles `chrome`). The control modes (Clicker / Trackpad) keep the
+  normal `Column` flow (their button UIs need the bar above, not overlaid). Added
+  imports `Brush`, `statusBarsPadding`. `:app:compileDebugKotlin` BUILD SUCCESSFUL.
 - **Web client top bar is now a transparent overlay** (`apps/web/index.html`,
   CSS only). The session-view `.topbar` was a solid `--card` strip above the
   canvas; it's now `position: absolute` over the top of `#stage` with a
