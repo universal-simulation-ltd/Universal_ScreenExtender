@@ -498,10 +498,13 @@ impl HostApp {
     /// them — straight from the Mac, as the backlog asked.
     fn show_virtual_displays(&mut self, ui: &mut egui::Ui) {
         // Snapshot under the lock so the UI never holds it while drawing.
-        let (entries, friendly): (Vec<(u32, String, (u32, u32))>, Option<String>) = {
+        let (entries, friendly): (Vec<(u32, String, String, (u32, u32))>, Option<String>) = {
             let s = self.vdisplays.lock().unwrap();
             (
-                s.entries.iter().map(|d| (d.id, d.name.clone(), d.size)).collect(),
+                s.entries
+                    .iter()
+                    .map(|d| (d.id, d.name.clone(), d.device_base.clone(), d.size))
+                    .collect(),
                 s.friendly_name.clone(),
             )
         };
@@ -514,7 +517,6 @@ impl HostApp {
         .show(ui, |ui| {
             let mut remove_id: Option<u32> = None;
             let mut apply_name = false;
-            let mut clear_name = false;
 
             if entries.is_empty() {
                 ui.label(
@@ -524,11 +526,16 @@ impl HostApp {
                     .weak(),
                 );
             }
-            for (id, name, (w, h)) in &entries {
+            for (id, actual_name, device_base, (w, h)) in &entries {
+                // The row's main name reflects the friendly override live, e.g.
+                // "Screen (iPhone)". The actual macOS display name catches up on
+                // the next reconnect (a CGVirtualDisplay can't be renamed live).
+                let label = crate::host::resolved_name(friendly.as_deref(), device_base);
+                let pending = label != *actual_name;
                 ui.horizontal(|ui| {
                     ui.label("🖥");
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(name).strong());
+                        ui.label(egui::RichText::new(label.as_str()).strong());
                         ui.small(format!("{w}×{h} · id {id}"));
                     });
                     // Rename opens an inline editor (closed by default); a second
@@ -538,7 +545,9 @@ impl HostApp {
                             self.renaming_id = None;
                         } else {
                             self.renaming_id = Some(*id);
-                            self.rename_draft = name.clone();
+                            // Pre-fill with the friendly part only, so re-renaming
+                            // never nests the "(device)" brackets.
+                            self.rename_draft = friendly.clone().unwrap_or_default();
                         }
                     }
                     if ui.button("Remove").clicked() {
@@ -560,22 +569,12 @@ impl HostApp {
                             self.renaming_id = None;
                         }
                     });
+                    ui.small("Leave blank to reset to the device name.");
+                } else if pending {
                     ui.small(
-                        "Applies when you reconnect the phone (a display can't be \
-                         renamed while live). It then keeps this name instead of \
-                         relabelling per device.",
+                        egui::RichText::new("Reconnect the phone to apply the new name.").weak(),
                     );
                 }
-            }
-
-            if let Some(f) = &friendly {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.small(format!("Name override: \u{201c}{f}\u{201d}"));
-                    if ui.small_button("Clear").clicked() {
-                        clear_name = true;
-                    }
-                });
             }
 
             if let Some(id) = remove_id {
@@ -584,10 +583,6 @@ impl HostApp {
             if apply_name {
                 crate::host::set_friendly_name(&self.vdisplays, Some(self.rename_draft.clone()));
                 self.renaming_id = None;
-            }
-            if clear_name {
-                crate::host::set_friendly_name(&self.vdisplays, None);
-                self.rename_draft.clear();
             }
         });
     }

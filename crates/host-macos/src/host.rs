@@ -46,11 +46,23 @@ pub(crate) struct Display {
     pub(crate) id: u32,
     pub(crate) size: (u32, u32),
     bounds: Bounds,
-    /// The descriptor name the display was created with. A `CGVirtualDisplay`
-    /// can't be renamed in place, so a differing name forces a recreate — this is
-    /// how the label follows whichever device is currently connected (or the
-    /// user's friendly-name override, when set).
+    /// The descriptor name the display was actually created with — i.e. the
+    /// resolved label `resolved_name(friendly, device)`. A `CGVirtualDisplay`
+    /// can't be renamed in place, so a differing name forces a recreate.
     pub(crate) name: String,
+    /// The raw connecting-device name (e.g. "iPhone"), kept so the GUI can show
+    /// the live "Friendly (Device)" label after a rename without nesting the
+    /// brackets, and so a recreate re-resolves the label correctly.
+    pub(crate) device_base: String,
+}
+
+/// The label a virtual display gets: the user's friendly name with the device in
+/// brackets, e.g. "Screen (iPhone)"; or just the device name when no override.
+pub(crate) fn resolved_name(friendly: Option<&str>, device: &str) -> String {
+    match friendly {
+        Some(f) if !f.trim().is_empty() => format!("{} ({})", f.trim(), device),
+        _ => device.to_string(),
+    }
 }
 
 /// Shared registry of virtual displays, so the GUI can list / rename / remove the
@@ -323,9 +335,7 @@ pub(crate) fn ensure_display(
 ) -> Result<(u32, (u32, u32), Bounds), Box<dyn std::error::Error>> {
     let desired_name = {
         let s = state.lock().unwrap();
-        s.friendly_name
-            .clone()
-            .unwrap_or_else(|| device_name.to_string())
+        resolved_name(s.friendly_name.as_deref(), device_name)
     };
 
     // Reconcile against what the window server actually has, reuse a match, and
@@ -359,7 +369,13 @@ pub(crate) fn ensure_display(
     let bounds = wait_for_display(id)
         .ok_or("virtual display did not register with the window server")?;
     println!("created virtual display {id}: \"{desired_name}\" {w}x{h} px");
-    let d = Display { id, size: (w, h), bounds, name: desired_name };
+    let d = Display {
+        id,
+        size: (w, h),
+        bounds,
+        name: desired_name,
+        device_base: device_name.to_string(),
+    };
     state.lock().unwrap().entries.push(d.clone());
     Ok((d.id, d.size, d.bounds))
 }
