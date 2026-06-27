@@ -6,10 +6,11 @@ use std::ffi::{c_char, CString};
 use std::io::{BufWriter, Write};
 use std::net::TcpStream;
 use std::ptr;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::{self, SyncSender};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use apple_cf::iosurface::IOSurface;
 use apple_cf::raw;
@@ -23,6 +24,7 @@ use extender_protocol::{
     self as protocol, Button, CaptureMode, Codec as WireCodec, Gesture, Input, Message, TouchPhase,
 };
 use screencapturekit::prelude::*;
+use screencapturekit::stream::delegate_trait::StreamCallbacks;
 use videotoolbox::prelude::*;
 
 const FPS: i32 = 60;
@@ -164,7 +166,28 @@ fn serve_video(
     let (tx, rx) = mpsc::sync_channel::<EncodedFrame>(2);
     let frame_no = Arc::new(AtomicI64::new(0));
 
-    let mut sc = SCStream::new(&filter, &config);
+    // Set when the capture stops (e.g. the target virtual display was removed
+    // from the GUI, or any SCStream error). Without this, no more frames arrive
+    // and `stream_to_client` would block on `rx.recv()` forever — wedging the
+    // accept loop so the next connection is never served.
+    let dead = Arc::new(AtomicBool::new(false));
+    let delegate = {
+        let dead_err = dead.clone();
+        let dead_stop = dead.clone();
+        StreamCallbacks::new()
+            .on_error(move |e| {
+                eprintln!("SCStream error: {e}");
+                dead_err.store(true, Ordering::Relaxed);
+            })
+            .on_stop(move |e| {
+                if let Some(msg) = e {
+                    eprintln!("SCStream stopped: {msg}");
+                }
+                dead_stop.store(true, Ordering::Relaxed);
+            })
+    };
+
+    let mut sc = SCStream::new_with_delegate(&filter, &config, delegate);
     {
         let encoder = encoder.clone();
         let frame_no = frame_no.clone();
@@ -180,7 +203,7 @@ fn serve_video(
     let input_thread = thread::spawn(move || receive_and_inject(input_stream, bounds));
 
     sc.start_capture()?;
-    let result = stream_to_client(stream, &rx, width, height);
+    let result = stream_to_client(stream, &rx, width, height, &dead);
     let _ = sc.stop_capture();
     let _ = input_thread.join();
     result
@@ -375,12 +398,26 @@ fn stream_to_client(
     rx: &std::sync::mpsc::Receiver<EncodedFrame>,
     width: u32,
     height: u32,
+    dead: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut out = BufWriter::new(stream);
     let mut started = false;
     let mut count = 0u64;
 
-    while let Ok(frame) = rx.recv() {
+    loop {
+        // Poll rather than block forever: if the capture stops (display removed /
+        // SCStream error) no more frames arrive, so we watch `dead` and return so
+        // the session ends and the accept loop is free to serve the next client.
+        let frame = match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(frame) => frame,
+            Err(RecvTimeoutError::Timeout) => {
+                if dead.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+        };
         if frame.data.is_empty() {
             continue;
         }
@@ -412,7 +449,6 @@ fn stream_to_client(
             println!("streamed {count} frames");
         }
     }
-    Ok(())
 }
 
 fn capture_and_encode(

@@ -67,6 +67,9 @@ struct HostApp {
     vdisplays: Arc<Mutex<crate::host::VDisplays>>,
     /// In-progress friendly-name edit in the Virtual displays panel.
     rename_draft: String,
+    /// The display id whose inline rename editor is open (None = closed). The
+    /// editor isn't shown by default — it opens when "Rename" is clicked.
+    renaming_id: Option<u32>,
 }
 
 impl HostApp {
@@ -113,6 +116,7 @@ impl HostApp {
             beacon_stop: Arc::new(AtomicBool::new(true)), // starts in stopped state
             vdisplays: Arc::new(Mutex::new(crate::host::VDisplays::default())),
             rename_draft: String::new(),
+            renaming_id: None,
         }
     }
 
@@ -527,30 +531,51 @@ impl HostApp {
                         ui.label(egui::RichText::new(name).strong());
                         ui.small(format!("{w}×{h} · id {id}"));
                     });
+                    // Rename opens an inline editor (closed by default); a second
+                    // click closes it again.
+                    if ui.button("Rename").clicked() {
+                        if self.renaming_id == Some(*id) {
+                            self.renaming_id = None;
+                        } else {
+                            self.renaming_id = Some(*id);
+                            self.rename_draft = name.clone();
+                        }
+                    }
                     if ui.button("Remove").clicked() {
                         remove_id = Some(*id);
+                        if self.renaming_id == Some(*id) {
+                            self.renaming_id = None;
+                        }
                     }
                 });
+
+                // Inline rename editor for this display — only when opened.
+                if self.renaming_id == Some(*id) {
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut self.rename_draft);
+                        if ui.button("Apply").clicked() {
+                            apply_name = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.renaming_id = None;
+                        }
+                    });
+                    ui.small(
+                        "Applies when you reconnect the phone (a display can't be \
+                         renamed while live). It then keeps this name instead of \
+                         relabelling per device.",
+                    );
+                }
             }
 
-            ui.add_space(6.0);
-            ui.separator();
-            ui.label(egui::RichText::new("Friendly name").strong());
-            ui.small(
-                "Overrides the connecting device's name. Applies the next time a \
-                 display is created (e.g. reconnect the phone).",
-            );
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.rename_draft);
-                if ui.button("Apply").clicked() {
-                    apply_name = true;
-                }
-            });
             if let Some(f) = &friendly {
-                ui.small(format!("Current override: \u{201c}{f}\u{201d}"));
-                if ui.button("Clear name override").clicked() {
-                    clear_name = true;
-                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.small(format!("Name override: \u{201c}{f}\u{201d}"));
+                    if ui.small_button("Clear").clicked() {
+                        clear_name = true;
+                    }
+                });
             }
 
             if let Some(id) = remove_id {
@@ -558,6 +583,7 @@ impl HostApp {
             }
             if apply_name {
                 crate::host::set_friendly_name(&self.vdisplays, Some(self.rename_draft.clone()));
+                self.renaming_id = None;
             }
             if clear_name {
                 crate::host::set_friendly_name(&self.vdisplays, None);
