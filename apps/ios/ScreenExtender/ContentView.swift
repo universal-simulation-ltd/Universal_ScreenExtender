@@ -134,8 +134,10 @@ struct ContentView: View {
         case .secondScreen: .virtualDisplay
         default: .mirror
         }
+        let deviceName = ConnectionStore.effectiveDeviceName()
         DispatchQueue.global(qos: .userInitiated).async {
-            let s = ExtenderSession.connect(addr: addr, mode: capture, pin: UInt32(pin))
+            let s = ExtenderSession.connect(addr: addr, mode: capture, pin: UInt32(pin),
+                                            deviceName: deviceName)
             DispatchQueue.main.async {
                 connecting = false
                 if s != nil {

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// A remembered host shown on the connect screen for quick reconnect. `os` and
 /// `hostname` are learned from the host's HostInfo after connecting. `mode` is
@@ -19,6 +20,7 @@ struct SavedConnection: Codable, Identifiable {
 enum ConnectionStore {
     private static let key = "savedConnections"
     private static let sensitivityKey = "trackpadSensitivity"
+    private static let deviceNameKey = "deviceDisplayName"
 
     static func load() -> [SavedConnection] {
         guard let data = UserDefaults.standard.data(forKey: key),
@@ -72,6 +74,26 @@ enum ConnectionStore {
         UserDefaults.standard.set(value, forKey: sensitivityKey)
     }
 
+    // MARK: - This device's name
+
+    /// The user-set nickname for this device, or "" if never set. Empty means
+    /// "use the system device name" — see `effectiveDeviceName()`.
+    static func loadDeviceName() -> String {
+        UserDefaults.standard.string(forKey: deviceNameKey) ?? ""
+    }
+
+    static func saveDeviceName(_ value: String) {
+        UserDefaults.standard.set(value.trimmingCharacters(in: .whitespacesAndNewlines),
+                                  forKey: deviceNameKey)
+    }
+
+    /// The name to advertise to a host: the user's nickname if set, else the
+    /// system device name (e.g. "iPhone"; iOS 16+ hides the personalised name).
+    static func effectiveDeviceName() -> String {
+        let nickname = loadDeviceName()
+        return nickname.isEmpty ? UIDevice.current.name : nickname
+    }
+
     // MARK: - Private
 
     private static func save(_ list: [SavedConnection]) {
@@ -81,12 +103,13 @@ enum ConnectionStore {
     }
 }
 
-/// SF Symbol name standing in for the host OS, for saved-connection rows.
-func deviceSymbol(_ os: String) -> String {
+/// Emoji standing in for the host OS, for saved-connection rows. Hosts are always
+/// desktop machines, so this is the OS identity (form factor is implicitly a PC).
+func deviceEmoji(_ os: String) -> String {
     switch os.lowercased() {
-    case "windows": return "pc"
-    case "macos", "mac": return "desktopcomputer"
-    case "linux": return "terminal"
-    default: return "display"
+    case "macos", "mac": return "🍎"
+    case "windows": return "🪟"
+    case "linux": return "🐧"
+    default: return "🖥️"
     }
 }

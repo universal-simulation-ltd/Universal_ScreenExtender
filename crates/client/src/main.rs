@@ -577,6 +577,8 @@ impl ApplicationHandler for App {
                 capture_mode: self.capture_mode,
                 platform: protocol::ClientPlatform::current(),
                 pin: 0,
+                // The desktop client doesn't supply a device name yet.
+                device_name: String::new(),
             };
             let addr = self.addr.clone();
             let shared = self.shared.clone();

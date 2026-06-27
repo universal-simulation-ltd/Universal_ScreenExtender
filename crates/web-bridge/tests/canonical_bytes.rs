@@ -17,6 +17,7 @@ fn print_canonical_postcard_bytes() {
         capture_mode: CaptureMode::MirrorPrimary,
         platform: ClientPlatform::Unknown,
         pin: 4321,
+        device_name: String::new(),
     };
     let start = Message::StreamStart {
         width: 1920,

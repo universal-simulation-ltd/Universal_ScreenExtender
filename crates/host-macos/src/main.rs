@@ -72,7 +72,7 @@ pub(crate) fn serve_loop(
             Ok((mut stream, peer_addr)) => {
                 let _ = stream.set_nonblocking(false);
                 let peer = peer_addr.to_string();
-                if let Some((platform, mode, w, h)) =
+                if let Some((platform, mode, w, h, name)) =
                     read_hello(&mut stream, &peer, expected_pin)
                 {
                     // Identify this host so the client can label/icon the connection.
@@ -88,7 +88,7 @@ pub(crate) fn serve_loop(
                     on_event(HostEvent::Connected { peer: peer.clone(), platform });
                     let result = match mode {
                         CaptureMode::ControlOnly => host::serve_control_only(stream),
-                        _ => host::serve_session(stream, mode, w, h, &mut display),
+                        _ => host::serve_session(stream, mode, w, h, &name, &mut display),
                     };
                     if let Err(e) = result {
                         on_event(HostEvent::Error(format!("session with {peer} ended: {e}")));
@@ -109,7 +109,7 @@ fn read_hello(
     stream: &mut TcpStream,
     peer: &str,
     expected_pin: u32,
-) -> Option<(ClientPlatform, CaptureMode, u32, u32)> {
+) -> Option<(ClientPlatform, CaptureMode, u32, u32, String)> {
     let hello: ClientHello = match protocol::read_framed(stream) {
         Ok(h) => h,
         Err(e) => {
@@ -139,11 +139,24 @@ fn read_hello(
         );
         return None;
     }
+    // Label the virtual display by the device name the client supplied, falling
+    // back to a generic platform label when it's empty.
+    let display_name = if hello.device_name.trim().is_empty() {
+        hello.platform.device_label().to_string()
+    } else {
+        hello.device_name.clone()
+    };
     println!(
-        "client {peer} hello: {}x{}, mode {:?}, platform {:?}",
+        "client {peer} hello: {}x{}, mode {:?}, platform {:?}, device {display_name:?}",
         hello.width, hello.height, hello.capture_mode, hello.platform
     );
-    Some((hello.platform, hello.capture_mode, hello.width, hello.height))
+    Some((
+        hello.platform,
+        hello.capture_mode,
+        hello.width,
+        hello.height,
+        display_name,
+    ))
 }
 
 pub(crate) fn host_name() -> String {

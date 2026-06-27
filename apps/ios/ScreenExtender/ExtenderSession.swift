@@ -23,15 +23,20 @@ final class ExtenderSession {
     private init(handle: OpaquePointer) { self.handle = handle }
 
     /// Blocking connect; returns `nil` on failure. Call off the main thread.
+    /// `deviceName` is sent to the host to label the virtual display (e.g.
+    /// "James's iPhone"); pass "" for none.
     static func connect(
         addr: String,
         width: UInt32 = 1920,
         height: UInt32 = 1080,
         mode: CaptureMode,
-        pin: UInt32 = 0
+        pin: UInt32 = 0,
+        deviceName: String = ""
     ) -> ExtenderSession? {
-        let handle = addr.withCString {
-            extender_session_connect($0, width, height, mode.rawValue, pin)
+        let handle = addr.withCString { addrPtr in
+            deviceName.withCString { namePtr in
+                extender_session_connect(addrPtr, width, height, mode.rawValue, pin, namePtr)
+            }
         }
         guard let handle else { return nil }
         return ExtenderSession(handle: handle)
