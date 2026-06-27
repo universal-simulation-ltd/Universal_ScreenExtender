@@ -84,6 +84,8 @@ pub extern "system" fn Java_com_universalsim_extender_ExtenderNative_nativeConne
         },
         platform: protocol::ClientPlatform::current(),
         pin: pin as u32,
+        // Android doesn't pass a device name yet — host falls back to a platform label.
+        device_name: String::new(),
     };
     let (input_tx, input_rx) = mpsc::channel();
     match Session::connect(&addr, &hello, input_rx) {

@@ -99,6 +99,9 @@ pub fn encode_hello(
         capture_mode: capture_mode(capture_mode_id)?,
         platform: platform(platform_id)?,
         pin,
+        // The browser client doesn't supply a device name yet — host falls back
+        // to a platform label.
+        device_name: String::new(),
     }))
 }
 

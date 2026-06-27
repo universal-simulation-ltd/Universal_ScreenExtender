@@ -223,6 +223,7 @@ mod tests {
             capture_mode: protocol::CaptureMode::default(),
             platform: protocol::ClientPlatform::current(),
             pin: 0,
+            device_name: String::new(),
         };
         let session = Session::connect(&addr.to_string(), &hello, input_rx).unwrap();
 

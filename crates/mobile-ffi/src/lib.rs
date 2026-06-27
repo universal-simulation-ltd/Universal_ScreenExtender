@@ -92,12 +92,15 @@ pub enum ExtenderMouseButton {
 /// screen (extend), 1 = mirror the host's primary display (remote control),
 /// 2 = control-only (input only, no video — the clicker). Unknown values fall
 /// back to virtual. `pin` is the host's 4-digit pairing code (0 = none).
+/// `device_name` is an optional human-readable name (e.g. "James's iPhone") the
+/// host can use to label the virtual display; pass null or "" for none.
 ///
 /// Returns an opaque session pointer, or null on a null/invalid `addr` or a
 /// connection/handshake failure. Free it with [`extender_session_free`].
 ///
 /// # Safety
 /// `addr` must be a valid pointer to a NUL-terminated C string (or null).
+/// `device_name`, if non-null, must likewise be a valid NUL-terminated C string.
 #[no_mangle]
 pub unsafe extern "C" fn extender_session_connect(
     addr: *const c_char,
@@ -105,12 +108,22 @@ pub unsafe extern "C" fn extender_session_connect(
     height: u32,
     capture_mode: u32,
     pin: u32,
+    device_name: *const c_char,
 ) -> *mut ExtenderSession {
     if addr.is_null() {
         return ptr::null_mut();
     }
     let Ok(addr) = unsafe { CStr::from_ptr(addr) }.to_str() else {
         return ptr::null_mut();
+    };
+    // Optional: null or invalid UTF-8 → no name (host falls back to a platform label).
+    let device_name = if device_name.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(device_name) }
+            .to_str()
+            .unwrap_or("")
+            .to_string()
     };
     let hello = ClientHello {
         protocol_version: protocol::PROTOCOL_VERSION,
@@ -123,6 +136,7 @@ pub unsafe extern "C" fn extender_session_connect(
         },
         platform: protocol::ClientPlatform::current(),
         pin,
+        device_name,
     };
     let (input_tx, input_rx) = mpsc::channel();
     match Session::connect(addr, &hello, input_rx) {

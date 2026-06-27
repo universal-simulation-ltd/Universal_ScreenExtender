@@ -2,6 +2,7 @@
 //! Adapted from `crates/host/src/main.rs`; split into library-style entry points
 //! so the GUI can spawn sessions on a background thread.
 
+use std::ffi::{c_char, CString};
 use std::io::{BufWriter, Write};
 use std::net::TcpStream;
 use std::ptr;
@@ -28,7 +29,7 @@ const FPS: i32 = 60;
 const BITRATE: i32 = 40_000_000;
 
 extern "C" {
-    fn extender_vdisplay_create(width: u32, height: u32) -> u32;
+    fn extender_vdisplay_create(width: u32, height: u32, name: *const c_char) -> u32;
 }
 
 /// Global bounds of a display: origin x/y and width/height in points.
@@ -39,6 +40,10 @@ pub(crate) struct Display {
     id: u32,
     size: (u32, u32),
     bounds: Bounds,
+    /// The descriptor name the display was created with. A `CGVirtualDisplay`
+    /// can't be renamed in place, so a differing name forces a recreate — this is
+    /// how the label follows whichever device is currently connected.
+    name: String,
 }
 
 /// Serve a video/control session. Dispatches on `mode`: extend creates (or
@@ -49,12 +54,13 @@ pub(crate) fn serve_session(
     mode: CaptureMode,
     target_w: u32,
     target_h: u32,
+    name: &str,
     display: &mut Option<Display>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = stream.set_nodelay(true);
 
     let (id, size, bounds) = match mode {
-        CaptureMode::VirtualDisplay => ensure_display(display, target_w, target_h)?,
+        CaptureMode::VirtualDisplay => ensure_display(display, target_w, target_h, name)?,
         CaptureMode::MirrorPrimary | CaptureMode::ControlOnly => primary_display()?,
     };
 
@@ -243,25 +249,32 @@ fn post_mouse(
     }
 }
 
-/// Get or create a virtual display of `(w, h)` pixels.
+/// Get or create a virtual display of `(w, h)` pixels named `name`. Recreates the
+/// display when the requested size *or* name changes (the name can't be set on a
+/// live `CGVirtualDisplay`), so the macOS display label tracks whichever device
+/// is connected.
 pub(crate) fn ensure_display(
     slot: &mut Option<Display>,
     w: u32,
     h: u32,
+    name: &str,
 ) -> Result<(u32, (u32, u32), Bounds), Box<dyn std::error::Error>> {
-    let needs_create = slot.as_ref().map_or(true, |d| d.size != (w, h));
+    let needs_create = slot
+        .as_ref()
+        .map_or(true, |d| d.size != (w, h) || d.name != name);
     if needs_create {
         if slot.is_some() {
-            println!("resizing virtual display to {w}x{h} (recreating)");
+            println!("recreating virtual display as \"{name}\" ({w}x{h})");
         }
-        let id = unsafe { extender_vdisplay_create(w, h) };
+        let c_name = CString::new(name).unwrap_or_default();
+        let id = unsafe { extender_vdisplay_create(w, h, c_name.as_ptr()) };
         if id == 0 {
             return Err("CGVirtualDisplay rejected the requested size".into());
         }
         let bounds = wait_for_display(id)
             .ok_or("virtual display did not register with the window server")?;
-        println!("created virtual display {id}: {w}x{h} px");
-        *slot = Some(Display { id, size: (w, h), bounds });
+        println!("created virtual display {id}: \"{name}\" {w}x{h} px");
+        *slot = Some(Display { id, size: (w, h), bounds, name: name.to_string() });
     }
     let d = slot.as_ref().expect("display set above");
     Ok((d.id, d.size, d.bounds))

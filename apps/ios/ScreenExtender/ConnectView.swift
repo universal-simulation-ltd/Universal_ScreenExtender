@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Home screen: scan to connect, or pick a saved host. A centred hero (logo +
 /// primary action) mirrors the Android client, with saved hosts as cards below.
@@ -11,6 +12,7 @@ struct ConnectView: View {
 
     @State private var addr = "127.0.0.1:9000"
     @State private var pin = ""
+    @State private var deviceName = ConnectionStore.loadDeviceName()
     @State private var saved: [SavedConnection] = ConnectionStore.load()
     @State private var showHidden = false
     @State private var showAdvanced = false
@@ -118,9 +120,8 @@ struct ConnectView: View {
             }
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: deviceSymbol(host.os))
+                Text(deviceEmoji(host.os))
                     .font(.title2)
-                    .foregroundStyle(Color.brandOrange)
                     .frame(width: 44, height: 44)
                     .background(Color.brandOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
@@ -176,6 +177,15 @@ struct ConnectView: View {
 
             if showAdvanced {
                 VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField(UIDevice.current.name, text: $deviceName)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: deviceName) { _, v in ConnectionStore.saveDeviceName(v) }
+                        Text("This device's name — labels the screen this phone adds on the host.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     TextField("Host (ip:port)", text: $addr)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)

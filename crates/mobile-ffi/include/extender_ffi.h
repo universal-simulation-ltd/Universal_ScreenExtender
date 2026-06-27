@@ -57,10 +57,12 @@ typedef enum {
 
 /* Connect to "host:port" with the given capture_mode (see EXTENDER_CAPTURE_*).
  * Unknown values fall back to virtual. `pin` is the host's 4-digit pairing code
- * (0 = none). NULL on failure. */
+ * (0 = none). `device_name` is an optional human-readable name (e.g. "James's
+ * iPhone") the host can use to label the virtual display; pass NULL or "" for
+ * none. NULL on failure. */
 ExtenderSession *extender_session_connect(const char *addr, uint32_t width,
                                           uint32_t height, uint32_t capture_mode,
-                                          uint32_t pin);
+                                          uint32_t pin, const char *device_name);
 
 /* Block for the next event; NULL when the stream ends. Free with
  * extender_event_free. */

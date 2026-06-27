@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 /// host window that should receive its keys. The host warns (but proceeds) on a
 /// version skew. v7 added a `start_show` flag to [`Input::FocusWindow`]. v8 added
 /// a `platform` field to [`ClientHello`] so a host can show the device type. v9
-/// added a `pin` field for the host's optional 4-digit pairing code.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// added a `pin` field for the host's optional 4-digit pairing code. v10 added a
+/// `device_name` field so a host can label a virtual display by the connecting
+/// device (e.g. "James's iPhone").
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Video codec used for the encoded frame stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +111,8 @@ pub enum Message {
 /// `capture_mode` field added in protocol v2 is *not* wire-compatible with a v1
 /// peer — both ends must be built from the same protocol version. The version
 /// field lets the host detect and warn about a skew.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// Not `Copy`: the `device_name` String added in v10 owns a heap allocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientHello {
     pub protocol_version: u32,
     pub width: u32,
@@ -120,6 +123,10 @@ pub struct ClientHello {
     /// The host's 4-digit pairing code, echoed back by the client (v9). `0` means
     /// "none supplied"; a host with pairing enabled rejects a mismatch.
     pub pin: u32,
+    /// A human-readable name for this device (e.g. "James's iPhone"), used by a
+    /// host to label a virtual display (v10). Empty = none supplied; a host then
+    /// falls back to a generic label from [`ClientPlatform::device_label`].
+    pub device_name: String,
 }
 
 /// A client -> host input event. Pointer coordinates are normalized to the
@@ -218,6 +225,20 @@ impl ClientPlatform {
             "android" => Self::Android,
             "ios" => Self::Ios,
             _ => Self::Unknown,
+        }
+    }
+
+    /// A generic human-readable label for this platform, used by a host to name a
+    /// virtual display when the client supplied no [`ClientHello::device_name`].
+    #[must_use]
+    pub fn device_label(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows PC",
+            Self::Macos => "Mac",
+            Self::Linux => "Linux PC",
+            Self::Android => "Android device",
+            Self::Ios => "iOS device",
+            Self::Unknown => "Universal Screens",
         }
     }
 }
@@ -416,6 +437,7 @@ mod tests {
                 capture_mode: mode,
                 platform: ClientPlatform::Android,
                 pin: 1234,
+                device_name: "Pixel 8".to_string(),
             };
             let mut buf = Vec::new();
             write_framed(&mut buf, &hello).unwrap();

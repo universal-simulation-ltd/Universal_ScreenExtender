@@ -28,6 +28,7 @@ fn browser_hello_and_host_message_round_trip_through_the_bridge() {
         capture_mode: CaptureMode::MirrorPrimary,
         platform: ClientPlatform::Unknown, // a browser isn't one of the native platforms
         pin: 4321,
+        device_name: String::new(),
     };
     let downstream = Message::StreamStart {
         width: 2560,
@@ -36,7 +37,7 @@ fn browser_hello_and_host_message_round_trip_through_the_bridge() {
         parameter_sets: vec![vec![0x67, 0x42, 0x00, 0x1f], vec![0x68, 0xce, 0x3c, 0x80]],
     };
 
-    let host_expected = expected_hello;
+    let host_expected = expected_hello.clone();
     let host_downstream = downstream.clone();
     let host = thread::spawn(move || {
         let (mut sock, _) = host_listener.accept().unwrap();

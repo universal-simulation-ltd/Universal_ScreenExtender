@@ -53,12 +53,20 @@
 
 static CGVirtualDisplay *g_display = nil;
 
-// Create one virtual display at the given pixel size. Retained for the process
-// lifetime. Returns its CGDirectDisplayID, or 0 on failure.
-uint32_t extender_vdisplay_create(uint32_t width, uint32_t height) {
+// Create one virtual display at the given pixel size, labelled `name` (the
+// connecting device — falls back to a default when null/empty). Retained for the
+// process lifetime. Returns its CGDirectDisplayID, or 0 on failure.
+uint32_t extender_vdisplay_create(uint32_t width, uint32_t height, const char *name) {
+    NSString *displayName = (name != NULL && name[0] != '\0')
+        ? [NSString stringWithUTF8String:name]
+        : nil;
+    if (displayName == nil) {
+        displayName = @"Universal Screens";
+    }
+
     CGVirtualDisplayDescriptor *descriptor = [[CGVirtualDisplayDescriptor alloc] init];
     descriptor.queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
-    descriptor.name = @"ExtenderScreen Virtual Display";
+    descriptor.name = displayName;
     descriptor.maxPixelsWide = width;
     descriptor.maxPixelsHigh = height;
     descriptor.sizeInMillimeters = CGSizeMake(25.4 * width / 109.0, 25.4 * height / 109.0);
