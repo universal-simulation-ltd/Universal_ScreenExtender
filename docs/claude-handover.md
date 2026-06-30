@@ -30,10 +30,20 @@ but it's the **inverse** of M7 and needs one new piece of infra. Wrote
   (first win, no WebRTC/capture) → **M8d** desktop→browser viewer (host dials the
   room, highest reuse) → **M8e** WebRTC media → **M8f** phone self-capture
   (MediaProjection/ReplayKit — net-new, last).
-- **Next:** review the doc; if green, M8a (DO rendezvous spike) is the gate.
-- Deploy state: doc-only PR on branch `docs/m8-browser-receiver` (Universal_Screens
-  repo). No host/app/worker code touched. *(Note: pre-existing unpushed commits sit
-  in the sibling `Docs_UNI_SIM` repo — untouched this session, not mine to ship.)*
+- **M8a SHIPPED** (gate done). `RendezvousRoom` Durable Object in the
+  **`opensource-portal` repo** (where the site Worker lives — *not* this repo):
+  `src/rendezvous.js` (one DO per code, ≤2 hibernatable WebSockets, verbatim relay,
+  10-min alarm TTL), `/screens/room` route + `RENDEZVOUS` binding + `v1` migration,
+  two-tab demo `public/screens/room-spike.html`. Verified 9/9 against `wrangler dev`;
+  `deploy --dry-run` clean. **Merged (opensource-portal PR #6), NOT deployed** — the
+  live site is untouched until someone runs `wrangler deploy`.
+- **Next:** M8b (receiver page + QR; extend `serveScreensConnect()` with `code`/
+  `role`) → M8c (control-only relay, first end-to-end win) → M8d (desktop→browser
+  viewer: host dials the room).
+- Deploy state: M8 doc merged (Universal_Screens PR #20); M8a code merged
+  (opensource-portal PR #6), un-deployed. No host/app code touched. *(Note:
+  pre-existing unpushed commits sit in the sibling `Docs_UNI_SIM` repo — untouched
+  this session, not mine to ship.)*
 
 ## Update — 2026-06-28 (Trackpad click-and-drag)
 
