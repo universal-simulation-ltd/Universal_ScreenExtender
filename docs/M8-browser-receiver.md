@@ -238,10 +238,12 @@ The DO room is **both** the rendezvous (Problem 1) and the Phase-1 relay
   (DO signals SDP/ICE; add a TURN fallback — Cloudflare Calls). New WebRTC stacks in
   the Rust host (`webrtc-rs`) + Android/iOS. Relay stays the fallback. This is the
   M7g-equivalent latency/cost upgrade; do **not** block earlier increments on it.
+  **Full design: [M8e-webrtc-media.md](M8e-webrtc-media.md).**
 - **M8f — phone → browser cast (NEW capability).** Phone becomes a *sender*:
   self-capture via Android **MediaProjection** / iOS **ReplayKit**, encode, and
   stream into the room (relay, then WebRTC). Phones are client-only today, so this
   is the most net-new app work — sequence it last.
+  **Full design: [M8f-phone-capture.md](M8f-phone-capture.md).**
 - **M8g — marketing wiring.** ✅ **Done** (`opensource-portal` PR #9). A hero CTA
   "**Use this screen as a receiver**" + a "make this screen a receiver" section on
   `/screens`, pointing at `/screens/receive`. Copy reflects the shipped control
