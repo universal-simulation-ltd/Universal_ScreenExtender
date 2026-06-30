@@ -1,8 +1,9 @@
 # M8 — Browser receiver ("the browser tab is the screen an app connects *to*")
 
-**Status:** 🚧 Planning (design only — no code). This doc is the milestone plan
-for the inverse of M7: instead of the browser being a *client* that dials a
-native host, the browser tab becomes a **receiver** the apps connect *into*.
+**Status:** M8a (rendezvous) ✅ — the rest 🚧 planning. This doc is the milestone
+plan for the inverse of M7: instead of the browser being a *client* that dials a
+native host, the browser tab becomes a **receiver** the apps connect *into*. The
+rendezvous gate (M8a) is built and verified; see the M8a sub-increment below.
 **Prereq:** M7 (browser client: WebCodecs decode, WASM `postcard` shim,
 `apps/web/`) ✅ for the render/codec half; M5 (shared `crates/core` session +
 mobile protocol) ✅; M6 (`ControlOnly` / clicker) ✅. The hosts already capture +
@@ -173,10 +174,17 @@ The DO room is **both** the rendezvous (Problem 1) and the Phase-1 relay
 
 ## Sub-increments
 
-- **M8a — rendezvous spike.** A Durable Object on the portal Worker: `joinRoom(code,
-  role)` over WebSocket; reserves a code, holds ≤2 sockets, pairs them, expires
-  after N minutes / on disconnect. *Gate:* two browser tabs join `room:7Q4K` and
-  exchange a hello. Pure web; no app changes.
+- **M8a — rendezvous spike.** ✅ **Done** (in the `opensource-portal` repo, not this
+  one — that's where the site Worker lives). `RendezvousRoom` Durable Object
+  (`src/rendezvous.js`): one instance per code (`idFromName`), ≤2 **hibernatable**
+  WebSockets, verbatim relay, `waiting`/`paired`/`peer-left` control frames, 10-min
+  TTL via an alarm. Routed by an exact-match `/screens/room` in `src/worker.js`
+  (`RENDEZVOUS` binding + `v1 new_sqlite_classes` migration in `wrangler.jsonc`).
+  *Gate met:* an automated two-client test against `wrangler dev` passes 9/9
+  (pairing, role reporting, verbatim relay both ways, room-full rejection,
+  peer-left, bad-code rejection); `deploy --dry-run` clean. Two-tab demo at
+  `public/screens/room-spike.html`. **Not deployed** (live site untouched). Pure
+  web; no app changes.
 - **M8b — receiver page + QR.** New `apps/web` view: mint a code, render it as text
   + branded QR (reuse the host's QR style), join the room, wait for a peer. Extend
   `serveScreensConnect()` with the `code`/`role` branch (worker.js:202) and the
@@ -244,9 +252,11 @@ because traffic now traverses a cloud rendezvous:
 
 ## Surface (planned)
 
-- `backoffice/opensource-portal/src/worker.js` — extend `serveScreensConnect()`
-  with the `code`/`role` branch; add the **Durable Object** room class + binding in
-  `wrangler.jsonc`. (M8a/M8b)
+- `backoffice/opensource-portal/` — ✅ (M8a) `src/rendezvous.js` (`RendezvousRoom`
+  DO), exact-match `/screens/room` route + class re-export in `src/worker.js`,
+  `RENDEZVOUS` binding + `v1` migration in `wrangler.jsonc`, demo
+  `public/screens/room-spike.html`. Still to do (M8b): extend `serveScreensConnect()`
+  with the `code`/`role` branch.
 - `apps/web/` — receiver view (mint code, render QR, join room), reusing
   `src/decoder.js` / `src/renderer.js` / `src/input.js` / the WASM shim; add a
   `src/rendezvous.js` (DO WebSocket client) + the post-pair mode picker. (M8b–M8d)
