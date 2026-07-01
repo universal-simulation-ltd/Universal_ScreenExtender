@@ -3,21 +3,77 @@ import SwiftUI
 
 /// A live camera viewfinder that decodes QR codes and calls `onScan` with the
 /// first result, then stops. Present as a full-screen sheet from the connect screen.
+///
+/// A big square viewfinder with the Universal logo in its centre frames the shot
+/// and helps line the code up (the host's QR shows the same icon). The square and
+/// its dimmed surround are purely visual — the camera still scans the whole frame,
+/// so a code anywhere on screen is decoded.
 struct QRScannerView: View {
     let onScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            QRCaptureView(onScan: { text in
-                dismiss()
-                onScan(text)
-            })
-            .ignoresSafeArea()
-            Button("Cancel") { dismiss() }
-                .padding()
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.bottom, 40)
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height) * 0.72
+            ZStack {
+                QRCaptureView(onScan: { text in
+                    dismiss()
+                    onScan(text)
+                })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Dim everything outside the square (visual only — scanning still
+                // uses the whole frame).
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .reverseMask {
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .frame(width: side, height: side)
+                    }
+
+                // The square viewfinder with the Universal icon in its centre as an
+                // alignment guide.
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.white.opacity(0.9), lineWidth: 3)
+                    .frame(width: side, height: side)
+
+                Image("AppLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: side * 0.32, height: side * 0.32)
+                    .opacity(0.85)
+
+                Text("Scan a Universal QR code")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .offset(y: side / 2 + 44)
+
+                VStack {
+                    Spacer()
+                    Button("Cancel") { dismiss() }
+                        .padding()
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 40)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private extension View {
+    /// Punch the given shape out of this view, leaving a transparent hole.
+    @ViewBuilder
+    func reverseMask<Mask: View>(@ViewBuilder _ mask: () -> Mask) -> some View {
+        self.mask {
+            Rectangle()
+                .overlay(alignment: .center) {
+                    mask().blendMode(.destinationOut)
+                }
+                .compositingGroup()
         }
     }
 }
