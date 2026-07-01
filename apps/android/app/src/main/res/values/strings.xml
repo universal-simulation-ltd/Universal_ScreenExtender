@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Universal Screens</string>
+    <string name="scan_prompt">Scan a Universal QR code</string>
 </resources>

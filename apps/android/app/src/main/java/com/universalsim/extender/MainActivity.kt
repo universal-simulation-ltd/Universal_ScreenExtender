@@ -459,7 +459,9 @@ fun ConnectScreen(
     val startScan: () -> Unit = {
         val options = ScanOptions()
             .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            .setPrompt("Point at the host's Step 2 QR")
+            // The prompt/caption is drawn by PortraitCaptureActivity's overlay, so
+            // leave zxing's own status text empty (its view is hidden anyway).
+            .setPrompt("")
             .setBeepEnabled(false)
             .setOrientationLocked(false)
             .setCaptureActivity(PortraitCaptureActivity::class.java)
